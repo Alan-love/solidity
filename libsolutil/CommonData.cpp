@@ -53,6 +53,9 @@ string solidity::util::toHex(uint8_t _data, HexCase _case)
 
 string solidity::util::toHex(bytes const& _data, HexPrefix _prefix, HexCase _case)
 {
+	if (_data.size() == 0)
+		return {};
+
 	std::string ret(_data.size() * 2 + (_prefix == HexPrefix::Add ? 2 : 0), 0);
 
 	size_t i = 0;
@@ -64,7 +67,7 @@ string solidity::util::toHex(bytes const& _data, HexPrefix _prefix, HexCase _cas
 
 	// Mixed case will be handled inside the loop.
 	char const* chars = _case == HexCase::Upper ? upperHexChars : lowerHexChars;
-	int rix = _data.size() - 1;
+	unsigned long rix = _data.size() - 1;
 	for (uint8_t c: _data)
 	{
 		// switch hex case every four hexchars
@@ -95,6 +98,9 @@ int solidity::util::fromHex(char _i, WhenError _throw)
 
 bytes solidity::util::fromHex(std::string const& _s, WhenError _throw)
 {
+	if (s.size() == 0)
+		return {};
+
 	unsigned s = (_s.size() >= 2 && _s[0] == '0' && _s[1] == 'x') ? 2 : 0;
 	std::vector<uint8_t> ret;
 	ret.reserve((_s.size() - s + 1) / 2);
