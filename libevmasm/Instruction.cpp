@@ -330,8 +330,8 @@ void solidity::evmasm::eachInstruction(
 {
 	for (auto it = _mem.begin(); it < _mem.end(); ++it)
 	{
-		Instruction instr = Instruction(*it);
-		size_t additional = 0;
+		auto instr = Instruction(*it);
+		int additional = 0;
 		if (isValidInstruction(instr))
 			additional = instructionInfo(instr).additional;
 

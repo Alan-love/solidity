@@ -93,22 +93,22 @@ unsigned AssemblyItem::bytesRequired(unsigned _addressLength) const
 	assertThrow(false, InvalidOpcode, "");
 }
 
-int AssemblyItem::arguments() const
+size_t AssemblyItem::arguments() const
 {
 	if (type() == Operation)
-		return instructionInfo(instruction()).args;
+		return size_t(instructionInfo(instruction()).args);
 	else if (type() == AssignImmutable)
 		return 1;
 	else
 		return 0;
 }
 
-int AssemblyItem::returnValues() const
+size_t AssemblyItem::returnValues() const
 {
 	switch (m_type)
 	{
 	case Operation:
-		return instructionInfo(instruction()).ret;
+		return size_t(instructionInfo(instruction()).ret);
 	case Push:
 	case PushString:
 	case PushTag:
@@ -317,7 +317,7 @@ std::string AssemblyItem::computeSourceMapping(
 	int prevStart = -1;
 	int prevLength = -1;
 	int prevSourceIndex = -1;
-	size_t prevModifierDepth = -1;
+	size_t prevModifierDepth = numeric_limits<size_t>::max();
 	char prevJump = 0;
 	for (auto const& item: _items)
 	{
@@ -328,7 +328,7 @@ std::string AssemblyItem::computeSourceMapping(
 		int length = location.start != -1 && location.end != -1 ? location.end - location.start : -1;
 		int sourceIndex =
 			location.source && _sourceIndicesMap.count(location.source->name()) ?
-			_sourceIndicesMap.at(location.source->name()) :
+			(int)_sourceIndicesMap.at(location.source->name()) :
 			-1;
 		char jump = '-';
 		if (item.getJumpType() == evmasm::AssemblyItem::JumpType::IntoFunction)

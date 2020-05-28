@@ -38,7 +38,7 @@ using namespace solidity;
 using namespace solidity::frontend;
 
 ASTNode::ASTNode(int64_t _id, SourceLocation _location):
-	m_id(_id),
+	m_id(size_t(_id)),
 	m_location(std::move(_location))
 {
 }

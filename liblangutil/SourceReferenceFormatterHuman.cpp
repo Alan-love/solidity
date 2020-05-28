@@ -87,7 +87,7 @@ void SourceReferenceFormatterHuman::printSourceLocation(SourceReference const& _
 
 	if (!_ref.multiline)
 	{
-		int const locationLength = _ref.endColumn - _ref.startColumn;
+		auto const locationLength = string::size_type(_ref.endColumn - _ref.startColumn);
 
 		// line 1:
 		m_stream << leftpad << ' ';
@@ -96,9 +96,9 @@ void SourceReferenceFormatterHuman::printSourceLocation(SourceReference const& _
 
 		// line 2:
 		frameColored() << line << " |";
-		m_stream << ' ' << _ref.text.substr(0, _ref.startColumn);
-		highlightColored() << _ref.text.substr(_ref.startColumn, locationLength);
-		m_stream << _ref.text.substr(_ref.endColumn) << '\n';
+		m_stream << ' ' << _ref.text.substr(0, string::size_type(_ref.startColumn));
+		highlightColored() << _ref.text.substr(string::size_type(_ref.startColumn), locationLength);
+		m_stream << _ref.text.substr(string::size_type(_ref.endColumn)) << '\n';
 
 		// line 3:
 		m_stream << leftpad << ' ';
@@ -107,10 +107,12 @@ void SourceReferenceFormatterHuman::printSourceLocation(SourceReference const& _
 
 		for_each(
 			_ref.text.cbegin(),
-			_ref.text.cbegin() + numCodepoints(_ref.text.substr(0, _ref.startColumn)),
+			_ref.text.cbegin() + string::difference_type(numCodepoints(
+				_ref.text.substr(0, string::size_type(_ref.startColumn))
+			)),
 			[this](char ch) { m_stream << (ch == '\t' ? '\t' : ' '); }
 		);
-		diagColored() << string(numCodepoints(_ref.text.substr(_ref.startColumn, locationLength)), '^');
+		diagColored() << string(numCodepoints(_ref.text.substr(string::size_type(_ref.startColumn), locationLength)), '^');
 		m_stream << '\n';
 	}
 	else
@@ -122,13 +124,13 @@ void SourceReferenceFormatterHuman::printSourceLocation(SourceReference const& _
 
 		// line 2:
 		frameColored() << line << " |";
-		m_stream << ' ' << _ref.text.substr(0, _ref.startColumn);
-		highlightColored() << _ref.text.substr(_ref.startColumn) << '\n';
+		m_stream << ' ' << _ref.text.substr(0, string::size_type(_ref.startColumn));
+		highlightColored() << _ref.text.substr(string::size_type(_ref.startColumn)) << '\n';
 
 		// line 3:
 		m_stream << leftpad << ' ';
 		frameColored() << '|';
-		m_stream << ' ' << string(_ref.startColumn, ' ');
+		m_stream << ' ' << string(string::size_type(_ref.startColumn), ' ');
 		diagColored() << "^ (Relevant source part starts here and spans across multiple lines).";
 		m_stream << '\n';
 	}

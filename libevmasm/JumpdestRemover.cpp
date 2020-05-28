@@ -30,7 +30,7 @@ using namespace solidity::evmasm;
 
 bool JumpdestRemover::optimise(set<size_t> const& _tagsReferencedFromOutside)
 {
-	set<size_t> references{referencedTags(m_items, -1)};
+	set<size_t> references{referencedTags(m_items, numeric_limits<size_t>::max())};
 	references.insert(_tagsReferencedFromOutside.begin(), _tagsReferencedFromOutside.end());
 
 	size_t initialSize = m_items.size();

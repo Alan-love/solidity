@@ -111,8 +111,8 @@ public:
 	std::shared_ptr<FitnessMetric> fitnessMetric() { return m_fitnessMetric; }
 	std::vector<Individual> const& individuals() const { return m_individuals; }
 
-	static size_t uniformChromosomeLength(size_t _min, size_t _max) { return SimulationRNG::uniformInt(_min, _max); }
-	static size_t binomialChromosomeLength(size_t _max) { return SimulationRNG::binomialInt(_max, 0.5); }
+	static size_t uniformChromosomeLength(size_t _min, size_t _max) { return size_t(SimulationRNG::uniformInt(long(_min), long(_max))); }
+	static size_t binomialChromosomeLength(size_t _max) { return size_t(SimulationRNG::binomialInt(long(_max), 0.5)); }
 
 	bool operator==(Population const& _other) const;
 	bool operator!=(Population const& _other) const { return !(*this == _other); }

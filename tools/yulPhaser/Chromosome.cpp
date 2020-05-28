@@ -72,5 +72,5 @@ string const& Chromosome::randomOptimisationStep()
 {
 	static vector<string> stepNames = allStepNames();
 
-	return stepNames[SimulationRNG::uniformInt(0, stepNames.size() - 1)];
+	return stepNames[size_t(SimulationRNG::uniformInt(0, long(stepNames.size()) - 1))];
 }

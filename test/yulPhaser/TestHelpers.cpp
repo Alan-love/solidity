@@ -72,9 +72,9 @@ size_t phaser::test::countDifferences(Chromosome const& _chromosome1, Chromosome
 {
 	size_t count = 0;
 	for (size_t i = 0; i < min(_chromosome1.length(), _chromosome2.length()); ++i)
-		count += static_cast<int>(_chromosome1.optimisationSteps()[i] != _chromosome2.optimisationSteps()[i]);
+		count += (_chromosome1.optimisationSteps()[i] != _chromosome2.optimisationSteps()[i]);
 
-	return count + abs(static_cast<int>(_chromosome1.length() - _chromosome2.length()));
+	return count + size_t(abs(long(_chromosome1.length()) - long(_chromosome2.length())));
 }
 
 TemporaryDirectory::TemporaryDirectory(std::string const& _prefix):

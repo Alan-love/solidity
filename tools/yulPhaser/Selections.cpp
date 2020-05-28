@@ -54,7 +54,7 @@ vector<size_t> RandomSelection::materialise(size_t _poolSize) const
 
 	vector<size_t> selection;
 	for (size_t i = 0; i < count; ++i)
-		selection.push_back(SimulationRNG::uniformInt(0, _poolSize - 1));
+		selection.push_back(size_t(SimulationRNG::uniformInt(0l, long(_poolSize) - 1)));
 
 	return selection;
 }

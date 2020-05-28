@@ -126,12 +126,12 @@ ChromosomePair fixedPointSwap(
 
 	return {
 		Chromosome(
-			vector<string>(begin1, begin1 + _crossoverPoint) +
-			vector<string>(begin2 + _crossoverPoint, end2)
+			vector<string>(begin1, begin1 + ptrdiff_t(_crossoverPoint)) +
+			vector<string>(begin2 + ptrdiff_t(_crossoverPoint), end2)
 		),
 		Chromosome(
-			vector<string>(begin2, begin2 + _crossoverPoint) +
-			vector<string>(begin1 + _crossoverPoint, end1)
+			vector<string>(begin2, begin2 + ptrdiff_t(_crossoverPoint)) +
+			vector<string>(begin1 + ptrdiff_t(_crossoverPoint), end1)
 		),
 	};
 }
@@ -148,7 +148,7 @@ function<Crossover> phaser::randomPointCrossover()
 		size_t minPoint = (minLength > 0 ? 1 : 0);
 		assert(minPoint <= minLength);
 
-		size_t randomPoint = SimulationRNG::uniformInt(minPoint, minLength);
+		auto randomPoint = size_t(SimulationRNG::uniformInt(long(minPoint), long(minLength)));
 		return get<0>(fixedPointSwap(_chromosome1, _chromosome2, randomPoint));
 	};
 }
@@ -163,7 +163,7 @@ function<SymmetricCrossover> phaser::symmetricRandomPointCrossover()
 		size_t minPoint = (minLength > 0 ? 1 : 0);
 		assert(minPoint <= minLength);
 
-		size_t randomPoint = SimulationRNG::uniformInt(minPoint, minLength);
+		auto randomPoint = size_t(SimulationRNG::uniformInt(long(minPoint), long(minLength)));
 		return fixedPointSwap(_chromosome1, _chromosome2, randomPoint);
 	};
 }
@@ -196,8 +196,8 @@ ChromosomePair fixedTwoPointSwap(
 	assert(_crossoverPoint2 <= _chromosome1.length());
 	assert(_crossoverPoint2 <= _chromosome2.length());
 
-	size_t lowPoint = min(_crossoverPoint1, _crossoverPoint2);
-	size_t highPoint = max(_crossoverPoint1, _crossoverPoint2);
+	auto lowPoint = ptrdiff_t(min(_crossoverPoint1, _crossoverPoint2));
+	auto highPoint = ptrdiff_t(max(_crossoverPoint1, _crossoverPoint2));
 
 	auto begin1 = _chromosome1.optimisationSteps().begin();
 	auto begin2 = _chromosome2.optimisationSteps().begin();
@@ -230,8 +230,8 @@ function<Crossover> phaser::randomTwoPointCrossover()
 		size_t minPoint = (minLength > 0 ? 1 : 0);
 		assert(minPoint <= minLength);
 
-		size_t randomPoint1 = SimulationRNG::uniformInt(minPoint, minLength);
-		size_t randomPoint2 = SimulationRNG::uniformInt(randomPoint1, minLength);
+		auto randomPoint1 = size_t(SimulationRNG::uniformInt(long(minPoint), long(minLength)));
+		auto randomPoint2 = size_t(SimulationRNG::uniformInt(long(randomPoint1), long(minLength)));
 		return get<0>(fixedTwoPointSwap(_chromosome1, _chromosome2, randomPoint1, randomPoint2));
 	};
 }
@@ -240,14 +240,14 @@ function<SymmetricCrossover> phaser::symmetricRandomTwoPointCrossover()
 {
 	return [=](Chromosome const& _chromosome1, Chromosome const& _chromosome2)
 	{
-		size_t minLength = min(_chromosome1.length(), _chromosome2.length());
+		auto minLength = long(min(_chromosome1.length(), _chromosome2.length()));
 
 		// Don't use position 0 (because this just swaps the values) unless it's the only choice.
-		size_t minPoint = (minLength > 0 ? 1 : 0);
+		long minPoint = (minLength > 0 ? 1 : 0);
 		assert(minPoint <= minLength);
 
-		size_t randomPoint1 = SimulationRNG::uniformInt(minPoint, minLength);
-		size_t randomPoint2 = SimulationRNG::uniformInt(randomPoint1, minLength);
+		auto randomPoint1 = size_t(SimulationRNG::uniformInt(minPoint, minLength));
+		auto randomPoint2 = size_t(SimulationRNG::uniformInt(long(randomPoint1), minLength));
 		return fixedTwoPointSwap(_chromosome1, _chromosome2, randomPoint1, randomPoint2);
 	};
 }
@@ -282,17 +282,17 @@ ChromosomePair uniformSwap(Chromosome const& _chromosome1, Chromosome const& _ch
 	if (_chromosome1.length() > minLength)
 	{
 		if (swapTail)
-			steps2.insert(steps2.end(), begin1 + minLength, end1);
+			steps2.insert(steps2.end(), begin1 + ptrdiff_t(minLength), end1);
 		else
-			steps1.insert(steps1.end(), begin1 + minLength, end1);
+			steps1.insert(steps1.end(), begin1 + ptrdiff_t(minLength), end1);
 	}
 
 	if (_chromosome2.length() > minLength)
 	{
 		if (swapTail)
-			steps1.insert(steps1.end(), begin2 + minLength, end2);
+			steps1.insert(steps1.end(), begin2 + ptrdiff_t(minLength), end2);
 		else
-			steps2.insert(steps2.end(), begin2 + minLength, end2);
+			steps2.insert(steps2.end(), begin2 + ptrdiff_t(minLength), end2);
 	}
 
 	return {Chromosome(steps1), Chromosome(steps2)};

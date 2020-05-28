@@ -41,7 +41,7 @@ using namespace solidity::util;
 AssemblyItem const& Assembly::append(AssemblyItem const& _i)
 {
 	assertThrow(m_deposit >= 0, AssemblyException, "Stack underflow.");
-	m_deposit += _i.deposit();
+	m_deposit += int(_i.deposit());
 	m_items.emplace_back(_i);
 	if (!m_items.back().location().isValid() && m_currentSourceLocation.isValid())
 		m_items.back().setLocation(m_currentSourceLocation);
@@ -80,7 +80,7 @@ string locationFromSources(StringMap const& _sourceCodes, SourceLocation const& 
 	if (size_t(_location.start) >= source.size())
 		return "";
 
-	string cut = source.substr(_location.start, _location.end - _location.start);
+	string cut = source.substr(size_t(_location.start), size_t(_location.end - _location.start));
 	auto newLinePos = cut.find_first_of("\n");
 	if (newLinePos != string::npos)
 		cut = cut.substr(0, newLinePos) + "...";
@@ -106,7 +106,7 @@ public:
 		if (!(
 			_item.canBeFunctional() &&
 			_item.returnValues() <= 1 &&
-			_item.arguments() <= int(m_pending.size())
+			_item.arguments() <= m_pending.size()
 		))
 		{
 			flush();
@@ -117,7 +117,7 @@ public:
 		if (_item.arguments() > 0)
 		{
 			expression += "(";
-			for (int i = 0; i < _item.arguments(); ++i)
+			for (size_t i = 0; i < _item.arguments(); ++i)
 			{
 				expression += m_pending.back();
 				m_pending.pop_back();
@@ -225,12 +225,12 @@ Json::Value Assembly::assemblyJSON(map<string, unsigned> const& _sourceIndices) 
 	Json::Value& collection = root[".code"] = Json::arrayValue;
 	for (AssemblyItem const& i: m_items)
 	{
-		unsigned sourceIndex = unsigned(-1);
+		int sourceIndex = -1;
 		if (i.location().source)
 		{
 			auto iter = _sourceIndices.find(i.location().source->name());
 			if (iter != _sourceIndices.end())
-				sourceIndex = iter->second;
+				sourceIndex = int(iter->second);
 		}
 
 		switch (i.type())
@@ -567,7 +567,7 @@ LinkerObject const& Assembly::assemble() const
 		);
 
 	size_t bytesRequiredForCode = bytesRequired(subTagSize);
-	m_tagPositionsInBytecode = vector<size_t>(m_usedTags, -1);
+	m_tagPositionsInBytecode = vector<size_t>(m_usedTags, numeric_limits<size_t>::max());
 	map<size_t, pair<size_t, size_t>> tagRef;
 	multimap<h256, unsigned> dataRef;
 	multimap<size_t, size_t> subRef;

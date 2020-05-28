@@ -64,15 +64,15 @@ string solidity::util::toHex(bytes const& _data, HexPrefix _prefix, HexCase _cas
 
 	// Mixed case will be handled inside the loop.
 	char const* chars = _case == HexCase::Upper ? upperHexChars : lowerHexChars;
-	int rix = _data.size() - 1;
+	size_t rix = _data.size() - 1;
 	for (uint8_t c: _data)
 	{
 		// switch hex case every four hexchars
 		if (_case == HexCase::Mixed)
 			chars = (rix-- & 2) == 0 ? lowerHexChars : upperHexChars;
 
-		ret[i++] = chars[(unsigned(c) / 16) & 0xf];
-		ret[i++] = chars[unsigned(c) & 0xf];
+		ret[i++] = chars[unsigned(c / 16) & 0xfu];
+		ret[i++] = chars[unsigned(c) & 0xfu];
 	}
 	assertThrow(i == ret.size(), Exception, "");
 

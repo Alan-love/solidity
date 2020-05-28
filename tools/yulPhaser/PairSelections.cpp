@@ -30,16 +30,16 @@ vector<tuple<size_t, size_t>> RandomPairSelection::materialise(size_t _poolSize)
 	if (_poolSize < 2)
 		return {};
 
-	size_t count = static_cast<size_t>(round(_poolSize * m_selectionSize));
+	auto count = static_cast<size_t>(round(_poolSize * m_selectionSize));
 
 	vector<tuple<size_t, size_t>> selection;
 	for (size_t i = 0; i < count; ++i)
 	{
-		size_t index1 = SimulationRNG::uniformInt(0, _poolSize - 1);
+		auto index1 = size_t(SimulationRNG::uniformInt(0, long(_poolSize) - 1));
 		size_t index2;
 		do
 		{
-			index2 = SimulationRNG::uniformInt(0, _poolSize - 1);
+			index2 = size_t(SimulationRNG::uniformInt(0, long(_poolSize) - 1));
 		} while (index1 == index2);
 
 		selection.emplace_back(index1, index2);
@@ -58,29 +58,29 @@ vector<tuple<size_t, size_t>> PairsFromRandomSubset::materialise(size_t _poolSiz
 		{
 			do
 			{
-				size_t extraIndex = SimulationRNG::uniformInt(0, selectedIndices.size() - 1);
+				auto extraIndex = size_t(SimulationRNG::uniformInt(0, long(selectedIndices.size()) - 1));
 				if (find(selectedIndices.begin(), selectedIndices.end(), extraIndex) == selectedIndices.end())
 					selectedIndices.push_back(extraIndex);
 			} while (selectedIndices.size() % 2 != 0);
 		}
 		else
-			selectedIndices.erase(selectedIndices.begin() + SimulationRNG::uniformInt(0, selectedIndices.size() - 1));
+			selectedIndices.erase(selectedIndices.begin() + SimulationRNG::uniformInt(0, long(selectedIndices.size()) - 1));
 	}
 	assert(selectedIndices.size() % 2 == 0);
 
 	vector<tuple<size_t, size_t>> selectedPairs;
 	for (size_t i = selectedIndices.size() / 2; i > 0; --i)
 	{
-		size_t position1 = SimulationRNG::uniformInt(0, selectedIndices.size() - 1);
+		auto position1 = size_t(SimulationRNG::uniformInt(0, long(selectedIndices.size()) - 1));
 		size_t value1 = selectedIndices[position1];
-		selectedIndices.erase(selectedIndices.begin() + position1);
-		size_t position2 = SimulationRNG::uniformInt(0, selectedIndices.size() - 1);
+		selectedIndices.erase(selectedIndices.begin() + ptrdiff_t(position1));
+		auto position2 = size_t(SimulationRNG::uniformInt(0, long(selectedIndices.size()) - 1));
 		size_t value2 = selectedIndices[position2];
-		selectedIndices.erase(selectedIndices.begin() + position2);
+		selectedIndices.erase(selectedIndices.begin() + ptrdiff_t(position2));
 
-		selectedPairs.push_back({value1, value2});
+		selectedPairs.emplace_back(value1, value2);
 	}
-	assert(selectedIndices.size() == 0);
+	assert(selectedIndices.empty());
 
 	return selectedPairs;
 }

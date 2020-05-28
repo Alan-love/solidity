@@ -38,8 +38,8 @@ class SimulationRNG
 {
 public:
 	static bool bernoulliTrial(double _successProbability);
-	static uint32_t uniformInt(uint32_t _min, uint32_t _max);
-	static uint32_t binomialInt(uint32_t _numTrials, double _successProbability);
+	static long uniformInt(long _min, long _max);
+	static long binomialInt(long _numTrials, double _successProbability);
 
 	/// Resets generator to a known state given by the @a seed. Given the same seed, a fixed
 	/// sequence of calls to the members generating random values is guaranteed to produce the

@@ -54,7 +54,7 @@ void DeadCodeEliminator::operator()(Block& _block)
 	if (controlFlowChange != TerminationFinder::ControlFlow::FlowOut && index != size_t(-1))
 		_block.statements.erase(
 			remove_if(
-				_block.statements.begin() + index + 1,
+				_block.statements.begin() + ptrdiff_t(index) + 1,
 				_block.statements.end(),
 				[] (Statement const& _s) { return !holds_alternative<yul::FunctionDefinition>(_s); }
 			),

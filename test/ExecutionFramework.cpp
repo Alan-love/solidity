@@ -101,7 +101,7 @@ u256 ExecutionFramework::gasPrice() const
 
 u256 ExecutionFramework::blockHash(u256 const& _number) const
 {
-	return {EVMHost::convertFromEVMC(m_evmHost->get_block_hash(uint64_t(_number & numeric_limits<uint64_t>::max())))};
+	return {EVMHost::convertFromEVMC(m_evmHost->get_block_hash(int64_t(_number & numeric_limits<int64_t>::max())))};
 }
 
 u256 ExecutionFramework::blockNumber() const
@@ -180,7 +180,7 @@ void ExecutionFramework::sendEther(Address const& _addr, u256 const& _amount)
 
 size_t ExecutionFramework::currentTimestamp()
 {
-	return m_evmHost->tx_context.block_timestamp;
+	return size_t(m_evmHost->tx_context.block_timestamp);
 }
 
 size_t ExecutionFramework::blockTimestamp(u256 _block)

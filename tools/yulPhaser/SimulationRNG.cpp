@@ -35,15 +35,15 @@ bool SimulationRNG::bernoulliTrial(double _successProbability)
 	return static_cast<bool>(distribution(s_generator));
 }
 
-uint32_t SimulationRNG::uniformInt(uint32_t _min, uint32_t _max)
+long SimulationRNG::uniformInt(long _min, long _max)
 {
-	boost::random::uniform_int_distribution<> distribution(_min, _max);
+	boost::random::uniform_int_distribution<long> distribution(_min, _max);
 	return distribution(s_generator);
 }
 
-uint32_t SimulationRNG::binomialInt(uint32_t _numTrials, double _successProbability)
+long SimulationRNG::binomialInt(long _numTrials, double _successProbability)
 {
-	boost::random::binomial_distribution<> distribution(_numTrials, _successProbability);
+	boost::random::binomial_distribution<long> distribution(_numTrials, _successProbability);
 	return distribution(s_generator);
 }
 
