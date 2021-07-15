@@ -91,6 +91,8 @@ size_t AssemblyItem::bytesRequired(size_t _addressLength) const
 			return 1 + (3 + 32) * *m_immutableOccurrences;
 		else
 			return 1 + (3 + 32) * 1024; // 1024 occurrences are beyond the maximum code size anyways.
+	case VerbatimBytecode:
+		return std::get<2>(*m_verbatimBytecode).size();
 	default:
 		break;
 	}
@@ -101,8 +103,10 @@ size_t AssemblyItem::arguments() const
 {
 	if (type() == Operation)
 		return static_cast<size_t>(instructionInfo(instruction()).args);
+	else if (type() == VerbatimBytecode)
+		return get<0>(*m_verbatimBytecode);
 	else if (type() == AssignImmutable)
-		return 1;
+		return 2;
 	else
 		return 0;
 }
@@ -126,6 +130,8 @@ size_t AssemblyItem::returnValues() const
 		return 1;
 	case Tag:
 		return 0;
+	case VerbatimBytecode:
+		return get<1>(*m_verbatimBytecode);
 	default:
 		break;
 	}
@@ -241,6 +247,9 @@ string AssemblyItem::toAssemblyText(Assembly const& _assembly) const
 	case UndefinedItem:
 		assertThrow(false, AssemblyException, "Invalid assembly item.");
 		break;
+	case VerbatimBytecode:
+		text = string("verbatimbytecode_") + util::toHex(get<2>(*m_verbatimBytecode));
+		break;
 	default:
 		assertThrow(false, InvalidOpcode, "");
 	}
@@ -309,6 +318,9 @@ ostream& solidity::evmasm::operator<<(ostream& _out, AssemblyItem const& _item)
 	case AssignImmutable:
 		_out << " AssignImmutable";
 		break;
+	case VerbatimBytecode:
+		_out << " Verbatim " << util::toHex(_item.verbatimData());
+		break;
 	case UndefinedItem:
 		_out << " ???";
 		break;
@@ -338,8 +350,8 @@ std::string AssemblyItem::computeSourceMapping(
 		SourceLocation const& location = item.location();
 		int length = location.start != -1 && location.end != -1 ? location.end - location.start : -1;
 		int sourceIndex =
-			location.source && _sourceIndicesMap.count(location.source->name()) ?
-			static_cast<int>(_sourceIndicesMap.at(location.source->name())) :
+			(location.sourceName && _sourceIndicesMap.count(*location.sourceName)) ?
+			static_cast<int>(_sourceIndicesMap.at(*location.sourceName)) :
 			-1;
 		char jump = '-';
 		if (item.getJumpType() == evmasm::AssemblyItem::JumpType::IntoFunction)

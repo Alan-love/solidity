@@ -8,7 +8,7 @@ Structure of a Contract
 
 Contracts in Solidity are similar to classes in object-oriented languages.
 Each contract can contain declarations of :ref:`structure-state-variables`, :ref:`structure-functions`,
-:ref:`structure-function-modifiers`, :ref:`structure-events`, :ref:`structure-struct-types` and :ref:`structure-enum-types`.
+:ref:`structure-function-modifiers`, :ref:`structure-events`, :ref:`structure-errors`, :ref:`structure-struct-types` and :ref:`structure-enum-types`.
 Furthermore, contracts can inherit from other contracts.
 
 There are also special kinds of contracts called :ref:`libraries<libraries>` and :ref:`interfaces<interfaces>`.
@@ -24,10 +24,10 @@ State Variables
 State variables are variables whose values are permanently stored in contract
 storage.
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.4.0 <0.8.0;
+    pragma solidity >=0.4.0 <0.9.0;
 
     contract SimpleStorage {
         uint storedData; // State variable
@@ -47,10 +47,10 @@ Functions are the executable units of code. Functions are usually
 defined inside a contract, but they can also be defined outside of
 contracts.
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >0.7.0 <0.8.0;
+    pragma solidity >0.7.0 <0.9.0;
 
     contract SimpleAuction {
         function bid() public payable { // Function
@@ -81,10 +81,10 @@ is not possible.
 
 Like functions, modifiers can be :ref:`overridden <modifier-overriding>`.
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.4.22 <0.8.0;
+    pragma solidity >=0.4.22 <0.9.0;
 
     contract Purchase {
         address public seller;
@@ -109,10 +109,10 @@ Events
 
 Events are convenience interfaces with the EVM logging facilities.
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.4.21 <0.8.0;
+    pragma solidity >=0.4.21 <0.9.0;
 
     contract SimpleAuction {
         event HighestBidIncreased(address bidder, uint amount); // Event
@@ -126,6 +126,40 @@ Events are convenience interfaces with the EVM logging facilities.
 See :ref:`events` in contracts section for information on how events are declared
 and can be used from within a dapp.
 
+.. _structure-errors:
+
+Errors
+======
+
+Errors allow you to define descriptive names and data for failure situations.
+Errors can be used in :ref:`revert statements <revert-statement>`.
+In comparison to string descriptions, errors are much cheaper and allow you
+to encode additional data. You can use NatSpec to describe the error to
+the user.
+
+.. code-block:: solidity
+
+    // SPDX-License-Identifier: GPL-3.0
+    pragma solidity ^0.8.4;
+
+    /// Not enough funds for transfer. Requested `requested`,
+    /// but only `available` available.
+    error NotEnoughFunds(uint requested, uint available);
+
+    contract Token {
+        mapping(address => uint) balances;
+        function transfer(address to, uint amount) public {
+            uint balance = balances[msg.sender];
+            if (balance < amount)
+                revert NotEnoughFunds(amount, balance);
+            balances[msg.sender] -= amount;
+            balances[to] += amount;
+            // ...
+        }
+    }
+
+See :ref:`errors` in the contracts section for more information.
+
 .. _structure-struct-types:
 
 Struct Types
@@ -134,10 +168,10 @@ Struct Types
 Structs are custom defined types that can group several variables (see
 :ref:`structs` in types section).
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.4.0 <0.8.0;
+    pragma solidity >=0.4.0 <0.9.0;
 
     contract Ballot {
         struct Voter { // Struct
@@ -156,10 +190,10 @@ Enum Types
 Enums can be used to create custom types with a finite set of 'constant values' (see
 :ref:`enums` in types section).
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.4.0 <0.8.0;
+    pragma solidity >=0.4.0 <0.9.0;
 
     contract Purchase {
         enum State { Created, Locked, Inactive } // Enum

@@ -47,6 +47,8 @@ public:
 		m_parserErrorRecovery = _parserErrorRecovery;
 	}
 
+	virtual ~ParserBase() = default;
+
 	std::shared_ptr<CharStream> source() const { return m_scanner->charStream(); }
 
 protected:
@@ -81,7 +83,7 @@ protected:
 	Token peekNextToken() const;
 	std::string tokenName(Token _token);
 	std::string currentLiteral() const;
-	Token advance();
+	virtual Token advance();
 	///@}
 
 	/// Increases the recursion depth and throws an exception if it is too deep.

@@ -21,9 +21,6 @@ For state variables, ``external`` is not possible.
     which means they can be called from other contracts and
     via transactions. An external function ``f`` cannot be called
     internally (i.e. ``f()`` does not work, but ``this.f()`` works).
-    External functions are sometimes more efficient when
-    they receive large arrays of data, because the data
-    is not copied from calldata to memory.
 
 ``public``
     Public functions are part of the contract interface
@@ -35,6 +32,7 @@ For state variables, ``external`` is not possible.
     Those functions and state variables can only be
     accessed internally (i.e. from within the current contract
     or contracts deriving from it), without using ``this``.
+    This is the default visibility level for state variables.
 
 ``private``
     Private functions and state variables are only
@@ -52,10 +50,10 @@ The visibility specifier is given after the type for
 state variables and between parameter list and
 return parameter list for functions.
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.4.16 <0.8.0;
+    pragma solidity >=0.4.16 <0.9.0;
 
     contract C {
         function f(uint a) private pure returns (uint b) { return a + 1; }
@@ -67,10 +65,10 @@ In the following example, ``D``, can call ``c.getData()`` to retrieve the value 
 ``data`` in state storage, but is not able to call ``f``. Contract ``E`` is derived from
 ``C`` and, thus, can call ``compute``.
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.4.16 <0.8.0;
+    pragma solidity >=0.4.16 <0.9.0;
 
     contract C {
         uint private data;
@@ -112,10 +110,10 @@ arguments and returns a ``uint``, the value of the state
 variable ``data``. State variables can be initialized
 when they are declared.
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.4.16 <0.8.0;
+    pragma solidity >=0.4.16 <0.9.0;
 
     contract C {
         uint public data = 42;
@@ -133,10 +131,10 @@ symbol is accessed internally (i.e. without ``this.``),
 it evaluates to a state variable.  If it is accessed externally
 (i.e. with ``this.``), it evaluates to a function.
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.4.0 <0.8.0;
+    pragma solidity >=0.4.0 <0.9.0;
 
     contract C {
         uint public data;
@@ -150,13 +148,13 @@ If you have a ``public`` state variable of array type, then you can only retriev
 single elements of the array via the generated getter function. This mechanism
 exists to avoid high gas costs when returning an entire array. You can use
 arguments to specify which individual element to return, for example
-``data(0)``. If you want to return an entire array in one call, then you need
+``myArray(0)``. If you want to return an entire array in one call, then you need
 to write a function, for example:
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.4.16 <0.8.0;
+    pragma solidity >=0.4.16 <0.9.0;
 
     contract arrayExample {
         // public state variable
@@ -180,26 +178,34 @@ Now you can use ``getArray()`` to retrieve the entire array, instead of
 
 The next example is more complex:
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.4.0 <0.8.0;
+    pragma solidity >=0.4.0 <0.9.0;
 
     contract Complex {
         struct Data {
             uint a;
             bytes3 b;
             mapping (uint => uint) map;
+            uint[3] c;
+            uint[] d;
+            bytes e;
         }
         mapping (uint => mapping(bool => Data[])) public data;
     }
 
-It generates a function of the following form. The mapping in the struct is omitted
-because there is no good way to provide the key for the mapping:
+It generates a function of the following form. The mapping and arrays (with the
+exception of byte arrays) in the struct are omitted because there is no good way
+to select individual struct members or provide a key for the mapping:
 
-::
+.. code-block:: solidity
 
-    function data(uint arg1, bool arg2, uint arg3) public returns (uint a, bytes3 b) {
+    function data(uint arg1, bool arg2, uint arg3)
+        public
+        returns (uint a, bytes3 b, bytes memory e)
+    {
         a = data[arg1][arg2][arg3].a;
         b = data[arg1][arg2][arg3].b;
+        e = data[arg1][arg2][arg3].e;
     }

@@ -38,16 +38,22 @@ To realize this in the EVM, code of internal library functions
 and all functions called from therein will at compile time be included in the calling
 contract, and a regular ``JUMP`` call will be used instead of a ``DELEGATECALL``.
 
+.. note::
+    The inheritance analogy breaks down when it comes to public functions.
+    Calling a public library function with ``L.f()`` results in an external call (``DELEGATECALL``
+    to be precise).
+    In contrast, ``A.f()`` is an internal call when ``A`` is a base contract of the current contract.
+
 .. index:: using for, set
 
 The following example illustrates how to use libraries (but using a manual method,
 be sure to check out :ref:`using for <using-for>` for a
 more advanced example to implement a set).
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.6.0 <0.8.0;
+    pragma solidity >=0.6.0 <0.9.0;
 
 
     // We define a new struct datatype that will be used to
@@ -123,10 +129,10 @@ The following example shows how to use :ref:`types stored in memory <data-locati
 internal functions in libraries in order to implement
 custom types without the overhead of external function calls:
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.6.0 <0.8.0;
+    pragma solidity >=0.6.8 <0.9.0;
 
     struct bigint {
         uint[] limbs;
@@ -145,7 +151,7 @@ custom types without the overhead of external function calls:
                 uint a = limb(_a, i);
                 uint b = limb(_b, i);
                 r.limbs[i] = a + b + carry;
-                if (a + b < a || (a + b == uint(-1) && carry > 0))
+                if (a + b < a || (a + b == type(uint).max && carry > 0))
                     carry = 1;
                 else
                     carry = 0;
@@ -175,7 +181,7 @@ custom types without the overhead of external function calls:
 
         function f() public pure {
             bigint memory x = BigInt.fromUint(7);
-            bigint memory y = BigInt.fromUint(uint(-1));
+            bigint memory y = BigInt.fromUint(type(uint).max);
             bigint memory z = x.add(y);
             assert(z.limb(1) > 0);
         }
@@ -204,6 +210,7 @@ In comparison to contracts, libraries are restricted in the following ways:
 (These might be lifted at a later point.)
 
 .. _library-selectors:
+.. index:: selector
 
 Function Signatures and Selectors in Libraries
 ==============================================
@@ -231,10 +238,10 @@ The argument encoding is the same as for the regular contract ABI, except for st
 Similarly to the contract ABI, the selector consists of the first four bytes of the Keccak256-hash of the signature.
 Its value can be obtained from Solidity using the ``.selector`` member as follows:
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.5.14 <0.8.0;
+    pragma solidity >=0.5.14 <0.9.0;
 
     library L {
         function f(uint256) external {}

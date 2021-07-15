@@ -30,11 +30,10 @@ At the end of the voting time, ``winningProposal()``
 will return the proposal with the largest number
 of votes.
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity ^0.7.0;
-
+    pragma solidity >=0.7.0 <0.9.0;
     /// @title Voting with delegation.
     contract Ballot {
         // This declares a new complex type which will

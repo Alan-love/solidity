@@ -76,16 +76,8 @@ bool NameAndTypeResolver::performImports(SourceUnit& _sourceUnit, map<string, So
 		if (auto imp = dynamic_cast<ImportDirective const*>(node.get()))
 		{
 			string const& path = *imp->annotation().absolutePath;
-			if (!_sourceUnits.count(path))
-			{
-				m_errorReporter.declarationError(
-					5073_error,
-					imp->location(),
-					"Import \"" + path + "\" (referenced as \"" + imp->path() + "\") not found."
-				);
-				error = true;
-				continue;
-			}
+			// The import resolution in CompilerStack enforces this.
+			solAssert(_sourceUnits.count(path), "");
 			auto scope = m_scopes.find(_sourceUnits.at(path));
 			solAssert(scope != end(m_scopes), "");
 			if (!imp->symbolAliases().empty())
@@ -190,7 +182,13 @@ vector<Declaration const*> NameAndTypeResolver::nameFromCurrentScope(ASTString c
 Declaration const* NameAndTypeResolver::pathFromCurrentScope(vector<ASTString> const& _path) const
 {
 	solAssert(!_path.empty(), "");
-	vector<Declaration const*> candidates = m_currentScope->resolveName(_path.front(), true);
+	vector<Declaration const*> candidates = m_currentScope->resolveName(
+		_path.front(),
+		/* _recursive */ true,
+		/* _alsoInvisible */ false,
+		/* _onlyVisibleAsUnqualifiedNames */ true
+	);
+
 	for (size_t i = 1; i < _path.size() && candidates.size() == 1; i++)
 	{
 		if (!m_scopes.count(candidates.front()))
@@ -201,27 +199,6 @@ Declaration const* NameAndTypeResolver::pathFromCurrentScope(vector<ASTString> c
 		return candidates.front();
 	else
 		return nullptr;
-}
-
-void NameAndTypeResolver::warnVariablesNamedLikeInstructions() const
-{
-	for (auto const& instruction: evmasm::c_instructions)
-	{
-		string const instructionName{boost::algorithm::to_lower_copy(instruction.first)};
-		auto declarations = nameFromCurrentScope(instructionName, true);
-		for (Declaration const* const declaration: declarations)
-		{
-			solAssert(!!declaration, "");
-			if (dynamic_cast<MagicVariableDeclaration const* const>(declaration))
-				// Don't warn the user for what the user did not.
-				continue;
-			m_errorReporter.warning(
-				8261_error,
-				declaration->location(),
-				"Variable is shadowed in inline assembly by an instruction of the same name"
-			);
-		}
-	}
 }
 
 void NameAndTypeResolver::warnHomonymDeclarations() const
@@ -401,7 +378,7 @@ void NameAndTypeResolver::linearizeBaseContracts(ContractDefinition& _contract)
 	list<list<ContractDefinition const*>> input(1, list<ContractDefinition const*>{});
 	for (ASTPointer<InheritanceSpecifier> const& baseSpecifier: _contract.baseContracts())
 	{
-		UserDefinedTypeName const& baseName = baseSpecifier->name();
+		IdentifierPath const& baseName = baseSpecifier->name();
 		auto base = dynamic_cast<ContractDefinition const*>(baseName.annotation().referencedDeclaration);
 		if (!base)
 			m_errorReporter.fatalTypeError(8758_error, baseName.location(), "Contract expected.");
@@ -418,7 +395,6 @@ void NameAndTypeResolver::linearizeBaseContracts(ContractDefinition& _contract)
 	if (result.empty())
 		m_errorReporter.fatalTypeError(5005_error, _contract.location(), "Linearization of inheritance graph impossible");
 	_contract.annotation().linearizedBaseContracts = result;
-	_contract.annotation().contractDependencies.insert(result.begin() + 1, result.end());
 }
 
 template <class T>
@@ -510,6 +486,33 @@ bool DeclarationRegistrationHelper::registerDeclaration(
 	// We use "invisible" for both inactive variables in blocks and for members invisible in contracts.
 	// They cannot both be true at the same time.
 	solAssert(!(_inactive && !_declaration.isVisibleInContract()), "");
+
+	static set<string> illegalNames{"_", "super", "this"};
+
+	if (illegalNames.count(name))
+	{
+		auto isPublicFunctionOrEvent = [](Declaration const* _d) -> bool
+		{
+			if (auto functionDefinition = dynamic_cast<FunctionDefinition const*>(_d))
+			{
+				if (!functionDefinition->isFree() && functionDefinition->isPublic())
+					return true;
+			}
+			else if (dynamic_cast<EventDefinition const*>(_d))
+				return true;
+
+			return false;
+		};
+
+		// We allow an exception for public functions or events.
+		if (!isPublicFunctionOrEvent(&_declaration))
+			_errorReporter.declarationError(
+				3726_error,
+				*_errorLocation,
+				"The name \"" + name + "\" is reserved."
+			);
+	}
+
 	if (!_container.registerDeclaration(_declaration, _name, _errorLocation, !_declaration.isVisibleInContract() || _inactive, false))
 	{
 		SourceLocation firstDeclarationLocation;
@@ -517,9 +520,9 @@ bool DeclarationRegistrationHelper::registerDeclaration(
 		Declaration const* conflictingDeclaration = _container.conflictingDeclaration(_declaration, _name);
 		solAssert(conflictingDeclaration, "");
 		bool const comparable =
-			_errorLocation->source &&
-			conflictingDeclaration->location().source &&
-			_errorLocation->source->name() == conflictingDeclaration->location().source->name();
+			_errorLocation->sourceName &&
+			conflictingDeclaration->location().sourceName &&
+			*_errorLocation->sourceName == *conflictingDeclaration->location().sourceName;
 		if (comparable && _errorLocation->start < conflictingDeclaration->location().start)
 		{
 			firstDeclarationLocation = *_errorLocation;
@@ -630,7 +633,10 @@ void DeclarationRegistrationHelper::enterNewSubScope(ASTNode& _subScope)
 		solAssert(dynamic_cast<SourceUnit const*>(&_subScope), "Unexpected scope type.");
 	else
 	{
-		bool newlyAdded = m_scopes.emplace(&_subScope, make_shared<DeclarationContainer>(m_currentScope, m_scopes[m_currentScope].get())).second;
+		bool newlyAdded = m_scopes.emplace(
+			&_subScope,
+			make_shared<DeclarationContainer>(m_currentScope, m_scopes[m_currentScope].get())
+		).second;
 		solAssert(newlyAdded, "Unable to add new scope.");
 	}
 	m_currentScope = &_subScope;

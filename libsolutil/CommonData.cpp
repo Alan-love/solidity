@@ -205,18 +205,12 @@ string solidity::util::escapeAndQuoteString(string const& _input)
 			out += "\\\\";
 		else if (c == '"')
 			out += "\\\"";
-		else if (c == '\b')
-			out += "\\b";
-		else if (c == '\f')
-			out += "\\f";
 		else if (c == '\n')
 			out += "\\n";
 		else if (c == '\r')
 			out += "\\r";
 		else if (c == '\t')
 			out += "\\t";
-		else if (c == '\v')
-			out += "\\v";
 		else if (!isprint(c, locale::classic()))
 		{
 			ostringstream o;

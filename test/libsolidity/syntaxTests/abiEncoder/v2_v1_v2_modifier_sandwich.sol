@@ -9,11 +9,12 @@ contract A {
     function get() public view returns (Data memory) {}
 }
 ==== Source: B ====
+pragma abicoder v1;
 import "A";
 
 contract B {
     modifier validate() {
-        A(0x00).get();
+        A(address(0x00)).get();
         _;
     }
 }
@@ -29,4 +30,4 @@ contract C is B {
     {}
 }
 // ----
-// TypeError 2428: (B:60-73): The type of return parameter 1, struct Data, is only supported in ABI coder v2. Use "pragma abicoder v2;" to enable the feature.
+// TypeError 2428: (B:80-102): The type of return parameter 1, struct Data, is only supported in ABI coder v2. Use "pragma abicoder v2;" to enable the feature.

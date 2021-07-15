@@ -14,13 +14,13 @@ contract C {
     }
 }
 // ====
-// compileViaYul: also
-// compileToEwasm: also
 // EVMVersion: >homestead
 // allowNonExistingFunctions: true
+// compileToEwasm: also
+// compileViaYul: also
 // ----
 // _() -> FAILURE
 // e() -> FAILURE, hex"08c379a0", 0x20, 0x13, "Transaction failed."
-// f(bool): false -> FAILURE, hex"08c379a0", 0x20, 0
-// g(bool): false -> FAILURE, hex"08c379a0", 0x20, 15, "Value is false."
-// h() -> FAILURE
+// f(bool): false -> FAILURE, hex"08c379a0", 0x20, 0x00
+// g(bool): false -> FAILURE, hex"08c379a0", 0x20, 0x0f, "Value is false."
+// h() -> FAILURE, hex"4e487b71", 0x01

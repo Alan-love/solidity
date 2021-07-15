@@ -60,10 +60,10 @@ Data locations are not only relevant for persistency of data, but also for the s
   variables of storage struct type, even if the local variable
   itself is just a reference.
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.5.0 <0.8.0;
+    pragma solidity >=0.5.0 <0.9.0;
 
     contract C {
         // The data location of x is storage.
@@ -114,7 +114,7 @@ Indices are zero-based, and access is in the opposite direction of the
 declaration.
 
 For example, if you have a variable ``uint[][5] memory x``, you access the
-second ``uint`` in the third dynamic array using ``x[2][1]``, and to access the
+seventh ``uint`` in the third dynamic array using ``x[2][6]``, and to access the
 third dynamic array, use ``x[2]``. Again,
 if you have an array ``T[5] a`` for a type ``T`` that can also be an array,
 then ``a[2]`` always has type ``T``.
@@ -136,20 +136,20 @@ a reference to it.
 
 .. _bytes:
 
-``bytes`` and ``strings`` as Arrays
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+``bytes`` and ``string`` as Arrays
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Variables of type ``bytes`` and ``string`` are special arrays. A ``bytes`` is similar to ``byte[]``,
+Variables of type ``bytes`` and ``string`` are special arrays. The ``bytes`` type is similar to ``bytes1[]``,
 but it is packed tightly in calldata and memory. ``string`` is equal to ``bytes`` but does not allow
 length or index access.
 
 Solidity does not have string manipulation functions, but there are
 third-party string libraries. You can also compare two strings by their keccak256-hash using
 ``keccak256(abi.encodePacked(s1)) == keccak256(abi.encodePacked(s2))`` and
-concatenate two strings using ``abi.encodePacked(s1, s2)``.
+concatenate two strings using ``bytes.concat(bytes(s1), bytes(s2))``.
 
-You should use ``bytes`` over ``byte[]`` because it is cheaper,
-since ``byte[]`` adds 31 padding bytes between the elements. As a general rule,
+You should use ``bytes`` over ``bytes1[]`` because it is cheaper,
+since ``bytes1[]`` adds 31 padding bytes between the elements. As a general rule,
 use ``bytes`` for arbitrary-length raw byte data and ``string`` for arbitrary-length
 string (UTF-8) data. If you can limit the length to a certain number of bytes,
 always use one of the value types ``bytes1`` to ``bytes32`` because they are much cheaper.
@@ -159,6 +159,32 @@ always use one of the value types ``bytes1`` to ``bytes32`` because they are muc
     ``bytes(s).length`` / ``bytes(s)[7] = 'x';``. Keep in mind
     that you are accessing the low-level bytes of the UTF-8 representation,
     and not the individual characters.
+
+.. index:: ! bytes-concat
+
+.. _bytes-concat:
+
+``bytes.concat`` function
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+You can concatenate a variable number of ``bytes`` or ``bytes1 ... bytes32`` using ``bytes.concat``.
+The function returns a single ``bytes memory`` array that contains the contents of the arguments without padding.
+If you want to use string parameters or other types, you need to convert them to ``bytes`` or ``bytes1``/.../``bytes32`` first.
+
+.. code-block:: solidity
+
+    // SPDX-License-Identifier: GPL-3.0
+    pragma solidity ^0.8.4;
+
+    contract C {
+        bytes s = "Storage";
+        function f(bytes calldata c, string memory m, bytes16 b) public view {
+            bytes memory a = bytes.concat(s, c, c[:2], "Literal", bytes(m), b);
+            assert((s.length + c.length + 2 + 7 + bytes(m).length + 16) == a.length);
+        }
+    }
+
+If you call ``bytes.concat`` without arguments it will return an empty ``bytes`` array.
 
 .. index:: ! array;allocating, new
 
@@ -171,10 +197,13 @@ the ``.push`` member functions are not available).
 You either have to calculate the required size in advance
 or create a new memory array and copy every element.
 
-::
+As all variables in Solidity, the elements of newly allocated arrays are always initialized
+with the :ref:`default value<default-value>`.
+
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.4.16 <0.8.0;
+    pragma solidity >=0.4.16 <0.9.0;
 
     contract C {
         function f(uint len) public pure {
@@ -192,21 +221,28 @@ Array Literals
 ^^^^^^^^^^^^^^
 
 An array literal is a comma-separated list of one or more expressions, enclosed
-in square brackets (``[...]``). For example ``[1, a, f(3)]``. There must be a
-common type all elements can be implicitly converted to. This is the elementary
-type of the array.
+in square brackets (``[...]``). For example ``[1, a, f(3)]``. The type of the
+array literal is determined as follows:
 
-Array literals are always statically-sized memory arrays.
+It is always a statically-sized memory array whose length is the
+number of expressions.
+
+The base type of the array is the type of the first expression on the list such that all
+other expressions can be implicitly converted to it. It is a type error
+if this is not possible.
+
+It is not enough that there is a type all the elements can be converted to. One of the elements
+has to be of that type.
 
 In the example below, the type of ``[1, 2, 3]`` is
-``uint8[3] memory``. Because the type of each of these constants is ``uint8``, if
+``uint8[3] memory``, because the type of each of these constants is ``uint8``. If
 you want the result to be a ``uint[3] memory`` type, you need to convert
 the first element to ``uint``.
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.4.16 <0.8.0;
+    pragma solidity >=0.4.16 <0.9.0;
 
     contract C {
         function f() public pure {
@@ -217,13 +253,35 @@ the first element to ``uint``.
         }
     }
 
+The array literal ``[1, -1]`` is invalid because the type of the first expression
+is ``uint8`` while the type of the second is ``int8`` and they cannot be implicitly
+converted to each other. To make it work, you can use ``[int8(1), -1]``, for example.
+
+Since fixed-size memory arrays of different type cannot be converted into each other
+(even if the base types can), you always have to specify a common base type explicitly
+if you want to use two-dimensional array literals:
+
+.. code-block:: solidity
+
+    // SPDX-License-Identifier: GPL-3.0
+    pragma solidity >=0.4.16 <0.9.0;
+
+    contract C {
+        function f() public pure returns (uint24[2][4] memory) {
+            uint24[2][4] memory x = [[uint24(0x1), 1], [0xffffff, 2], [uint24(0xff), 3], [uint24(0xffff), 4]];
+            // The following does not work, because some of the inner arrays are not of the right type.
+            // uint[2][4] memory x = [[0x1, 1], [0xffffff, 2], [0xff, 3], [0xffff, 4]];
+            return x;
+        }
+    }
+
 Fixed size memory arrays cannot be assigned to dynamically-sized
 memory arrays, i.e. the following is not possible:
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.4.0 <0.8.0;
+    pragma solidity >=0.4.0 <0.9.0;
 
     // This will not compile.
     contract C {
@@ -240,10 +298,10 @@ complications because of how arrays are passed in the ABI.
 If you want to initialize dynamically-sized arrays, you have to assign the
 individual elements:
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.4.16 <0.8.0;
+    pragma solidity >=0.4.16 <0.9.0;
 
     contract C {
         function f() public pure {
@@ -298,10 +356,10 @@ Array Members
     that return dynamic arrays, make sure to use an EVM that is set to
     Byzantium mode.
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.6.0 <0.8.0;
+    pragma solidity >=0.6.0 <0.9.0;
 
     contract ArrayContract {
         uint[2**20] m_aLotOfIntegers;
@@ -391,7 +449,7 @@ Array Members
             // Create a dynamic byte array:
             bytes memory b = new bytes(200);
             for (uint i = 0; i < b.length; i++)
-                b[i] = byte(uint8(i));
+                b[i] = bytes1(uint8(i));
             return b;
         }
     }
@@ -431,11 +489,10 @@ they only exist in intermediate expressions.
 
 Array slices are useful to ABI-decode secondary data passed in function parameters:
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity ^0.7.0;
-
+    pragma solidity >0.8.4 <0.9.0;
     contract Proxy {
         /// @dev Address of the client contract managed by proxy i.e., this contract
         address client;
@@ -447,13 +504,9 @@ Array slices are useful to ABI-decode secondary data passed in function paramete
         /// Forward call to "setOwner(address)" that is implemented by client
         /// after doing basic validation on the address argument.
         function forward(bytes calldata _payload) external {
-            // Since ABI decoding requires padded data, we cannot
-            // use abi.decode(_payload[:4], (bytes4)).
-            bytes4 sig =
-                _payload[0] |
-                (bytes4(_payload[1]) >> 8) |
-                (bytes4(_payload[2]) >> 16) |
-                (bytes4(_payload[3]) >> 24);
+            bytes4 sig = bytes4(_payload[:4]);
+            // Due to truncating behaviour, bytes4(_payload) performs identically.
+            // bytes4 sig = bytes4(_payload);
             if (sig == bytes4(keccak256("setOwner(address)"))) {
                 address owner = abi.decode(_payload[4:], (address));
                 require(owner != address(0), "Address of owner cannot be zero.");
@@ -475,10 +528,10 @@ Structs
 Solidity provides a way to define new types in the form of structs, which is
 shown in the following example:
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.6.0 <0.8.0;
+    pragma solidity >=0.6.0 <0.9.0;
 
     // Defines a new type with two fields.
     // Declaring a struct outside of a contract allows
@@ -506,7 +559,7 @@ shown in the following example:
         function newCampaign(address payable beneficiary, uint goal) public returns (uint campaignID) {
             campaignID = numCampaigns++; // campaignID is return variable
             // We cannot use "campaigns[campaignID] = Campaign(beneficiary, goal, 0, 0)"
-            // because the RHS creates a memory-struct "Campaign" that contains a mapping.
+            // because the right hand side creates a memory-struct "Campaign" that contains a mapping.
             Campaign storage c = campaigns[campaignID];
             c.beneficiary = beneficiary;
             c.fundingGoal = goal;

@@ -114,16 +114,6 @@ std::string friendlyName(Token tok)
 	return std::string(ret);
 }
 
-#define T(name, string, precedence) precedence,
-int precedence(Token tok)
-{
-	int8_t const static precs[TokenTraits::count()] =
-	{
-		TOKEN_LIST(T, T)
-	};
-	return precs[static_cast<size_t>(tok)];
-}
-#undef T
 
 static Token keywordByName(string const& _name)
 {

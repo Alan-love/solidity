@@ -60,18 +60,56 @@ void removeTestSuite(std::string const& _name)
 	master.remove(id);
 }
 
+void runTestCase(TestCase::Config const& _config, TestCase::TestCaseCreator const& _testCaseCreator)
+{
+	try
+	{
+		stringstream errorStream;
+		auto testCase = _testCaseCreator(_config);
+		if (testCase->shouldRun())
+			switch (testCase->run(errorStream))
+			{
+				case TestCase::TestResult::Success:
+					break;
+				case TestCase::TestResult::Failure:
+					BOOST_ERROR("Test expectation mismatch.\n" + errorStream.str());
+					break;
+				case TestCase::TestResult::FatalError:
+					BOOST_ERROR("Fatal error during test.\n" + errorStream.str());
+					break;
+			}
+	}
+	catch (boost::exception const& _e)
+	{
+		BOOST_ERROR("Exception during extracted test: " << boost::diagnostic_information(_e));
+	}
+	catch (std::exception const& _e)
+	{
+		BOOST_ERROR("Exception during extracted test: " << boost::diagnostic_information(_e));
+	}
+}
+
 int registerTests(
 	boost::unit_test::test_suite& _suite,
 	boost::filesystem::path const& _basepath,
 	boost::filesystem::path const& _path,
 	bool _enforceViaYul,
+	bool _enforceCompileToEwasm,
 	vector<string> const& _labels,
 	TestCase::TestCaseCreator _testCaseCreator
 )
 {
 	int numTestsAdded = 0;
 	fs::path fullpath = _basepath / _path;
-	TestCase::Config config{fullpath.string(), solidity::test::CommonOptions::get().evmVersion(), solidity::test::CommonOptions::get().vmPaths, _enforceViaYul};
+	TestCase::Config config{
+		fullpath.string(),
+		solidity::test::CommonOptions::get().evmVersion(),
+		solidity::test::CommonOptions::get().vmPaths,
+		_enforceViaYul,
+		_enforceCompileToEwasm,
+		solidity::test::CommonOptions::get().enforceGasTest,
+		solidity::test::CommonOptions::get().enforceGasTestMinValue,
+	};
 	if (fs::is_directory(fullpath))
 	{
 		test_suite* sub_suite = BOOST_TEST_SUITE(_path.filename().string());
@@ -79,11 +117,15 @@ int registerTests(
 			fs::directory_iterator(fullpath),
 			fs::directory_iterator()
 		))
-			if (fs::is_directory(entry.path()) || TestCase::isTestFilename(entry.path().filename()))
+			if (
+				solidity::test::isValidSemanticTestPath(entry) &&
+				(fs::is_directory(entry.path()) || TestCase::isTestFilename(entry.path().filename()))
+			)
 				numTestsAdded += registerTests(
 					*sub_suite,
 					_basepath, _path / entry.path().filename(),
 					_enforceViaYul,
+					_enforceCompileToEwasm,
 					_labels,
 					_testCaseCreator
 				);
@@ -101,28 +143,8 @@ int registerTests(
 			[config, _testCaseCreator]
 			{
 				BOOST_REQUIRE_NO_THROW({
-					try
-					{
-						stringstream errorStream;
-						auto testCase = _testCaseCreator(config);
-						if (testCase->shouldRun())
-							switch (testCase->run(errorStream))
-							{
-								case TestCase::TestResult::Success:
-									break;
-								case TestCase::TestResult::Failure:
-									BOOST_ERROR("Test expectation mismatch.\n" + errorStream.str());
-									break;
-								case TestCase::TestResult::FatalError:
-									BOOST_ERROR("Fatal error during test.\n" + errorStream.str());
-									break;
-							}
-					}
-					catch (boost::exception const& _e)
-					{
-						BOOST_ERROR("Exception during extracted test: " << boost::diagnostic_information(_e));
-					}
-			   });
+					runTestCase(config, _testCaseCreator);
+				});
 			},
 			_path.stem().string(),
 			*filenames.back(),
@@ -159,17 +181,10 @@ test_suite* init_unit_test_suite( int /*argc*/, char* /*argv*/[] )
 
 	initializeOptions();
 
-	bool disableSemantics = true;
-	try
-	{
-		disableSemantics = !solidity::test::EVMHost::checkVmPaths(solidity::test::CommonOptions::get().vmPaths);
-	}
-	catch (std::runtime_error const& _exception)
-	{
-		cerr << "Error: " << _exception.what() << endl;
+	if (!solidity::test::loadVMs(solidity::test::CommonOptions::get()))
 		exit(1);
-	}
-	if (disableSemantics)
+
+	if (solidity::test::CommonOptions::get().disableSemanticTests)
 		cout << endl << "--- SKIPPING ALL SEMANTICS TESTS ---" << endl << endl;
 
 	// Include the interactive tests in the automatic tests as well
@@ -180,7 +195,7 @@ test_suite* init_unit_test_suite( int /*argc*/, char* /*argv*/[] )
 		if (ts.smt && options.disableSMT)
 			continue;
 
-		if (ts.needsVM && disableSemantics)
+		if (ts.needsVM && solidity::test::CommonOptions::get().disableSemanticTests)
 			continue;
 
 		solAssert(registerTests(
@@ -188,12 +203,13 @@ test_suite* init_unit_test_suite( int /*argc*/, char* /*argv*/[] )
 			options.testPath / ts.path,
 			ts.subpath,
 			options.enforceViaYul,
+			options.enforceCompileToEwasm,
 			ts.labels,
 			ts.testCaseCreator
 		) > 0, std::string("no ") + ts.title + " tests found");
 	}
 
-	if (disableSemantics)
+	if (solidity::test::CommonOptions::get().disableSemanticTests)
 	{
 		for (auto suite: {
 			"ABIDecoderTest",

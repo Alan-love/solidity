@@ -25,10 +25,7 @@
 
 #include <libyul/AsmAnalysis.h>
 #include <libyul/AsmAnalysisInfo.h>
-#include <libyul/AsmParser.h>
-#include <libyul/AsmPrinter.h>
-#include <libyul/backends/evm/AsmCodeGen.h>
-#include <libyul/backends/evm/EVMAssembly.h>
+#include <libyul/backends/evm/EthAssemblyAdapter.h>
 #include <libyul/backends/evm/EVMCodeTransform.h>
 #include <libyul/backends/evm/EVMDialect.h>
 #include <libyul/backends/evm/EVMObjectCompiler.h>
@@ -36,14 +33,12 @@
 #include <libyul/backends/wasm/WasmDialect.h>
 #include <libyul/backends/wasm/WasmObjectCompiler.h>
 #include <libyul/backends/wasm/EVMToEwasmTranslator.h>
-#include <libyul/optimiser/Metrics.h>
 #include <libyul/ObjectParser.h>
 #include <libyul/optimiser/Suite.h>
 
-#include <libsolidity/interface/OptimiserSettings.h>
-
 #include <libevmasm/Assembly.h>
 #include <liblangutil/Scanner.h>
+#include <optional>
 
 using namespace std;
 using namespace solidity;
@@ -68,21 +63,45 @@ Dialect const& languageToDialect(AssemblyStack::Language _language, EVMVersion _
 	return Dialect::yulDeprecated();
 }
 
+// Duplicated from libsolidity/codegen/CompilerContext.cpp
+// TODO: refactor and remove duplication
+evmasm::Assembly::OptimiserSettings translateOptimiserSettings(
+	frontend::OptimiserSettings const& _settings,
+	langutil::EVMVersion _evmVersion
+)
+{
+	// Constructing it this way so that we notice changes in the fields.
+	evmasm::Assembly::OptimiserSettings asmSettings{false, false,  false, false, false, false, false, _evmVersion, 0};
+	asmSettings.isCreation = true;
+	asmSettings.runInliner = _settings.runInliner;
+	asmSettings.runJumpdestRemover = _settings.runJumpdestRemover;
+	asmSettings.runPeephole = _settings.runPeephole;
+	asmSettings.runDeduplicate = _settings.runDeduplicate;
+	asmSettings.runCSE = _settings.runCSE;
+	asmSettings.runConstantOptimiser = _settings.runConstantOptimiser;
+	asmSettings.expectedExecutionsPerDeployment = _settings.expectedExecutionsPerDeployment;
+	asmSettings.evmVersion = _evmVersion;
+
+	return asmSettings;
+}
+
 }
 
 
-Scanner const& AssemblyStack::scanner() const
+CharStream const& AssemblyStack::charStream(string const& _sourceName) const
 {
-	yulAssert(m_scanner, "");
-	return *m_scanner;
+	yulAssert(m_charStream, "");
+	yulAssert(m_charStream->name() == _sourceName, "");
+	return *m_charStream;
 }
 
 bool AssemblyStack::parseAndAnalyze(std::string const& _sourceName, std::string const& _source)
 {
 	m_errors.clear();
 	m_analysisSuccessful = false;
-	m_scanner = make_shared<Scanner>(CharStream(_source, _sourceName));
-	m_parserResult = ObjectParser(m_errorReporter, languageToDialect(m_language, m_evmVersion)).parse(m_scanner, false);
+	m_charStream = make_unique<CharStream>(_source, _sourceName);
+	shared_ptr<Scanner> scanner = make_shared<Scanner>(*m_charStream);
+	m_parserResult = ObjectParser(m_errorReporter, languageToDialect(m_language, m_evmVersion)).parse(scanner, false);
 	if (!m_errorReporter.errors().empty())
 		return false;
 	yulAssert(m_parserResult, "");
@@ -115,7 +134,8 @@ void AssemblyStack::translate(AssemblyStack::Language _targetLanguage)
 	);
 
 	*m_parserResult = EVMToEwasmTranslator(
-		languageToDialect(m_language, m_evmVersion)
+		languageToDialect(m_language, m_evmVersion),
+		*this
 	).run(*parserResult());
 
 	m_language = _targetLanguage;
@@ -148,7 +168,7 @@ bool AssemblyStack::analyzeParsed(Object& _object)
 	return success;
 }
 
-void AssemblyStack::compileEVM(AbstractAssembly& _assembly, bool _evm15, bool _optimize) const
+void AssemblyStack::compileEVM(AbstractAssembly& _assembly, bool _optimize) const
 {
 	EVMDialect const* dialect = nullptr;
 	switch (m_language)
@@ -165,7 +185,7 @@ void AssemblyStack::compileEVM(AbstractAssembly& _assembly, bool _evm15, bool _o
 			break;
 	}
 
-	EVMObjectCompiler::compile(*m_parserResult, _assembly, *dialect, _evm15, _optimize);
+	EVMObjectCompiler::compile(*m_parserResult, _assembly, *dialect, _optimize);
 }
 
 void AssemblyStack::optimize(Object& _object, bool _isCreation)
@@ -185,7 +205,9 @@ void AssemblyStack::optimize(Object& _object, bool _isCreation)
 		meter.get(),
 		_object,
 		m_optimiserSettings.optimizeStackAllocation,
-		m_optimiserSettings.yulOptimiserSteps
+		m_optimiserSettings.yulOptimiserSteps,
+		_isCreation ? nullopt : make_optional(m_optimiserSettings.expectedExecutionsPerDeployment),
+		{}
 	);
 }
 
@@ -199,16 +221,7 @@ MachineAssemblyObject AssemblyStack::assemble(Machine _machine) const
 	switch (_machine)
 	{
 	case Machine::EVM:
-		return assembleAndGuessRuntime().first;
-	case Machine::EVM15:
-	{
-		MachineAssemblyObject object;
-		EVMAssembly assembly(true);
-		compileEVM(assembly, true, m_optimiserSettings.optimizeStackAllocation);
-		object.bytecode = make_shared<evmasm::LinkerObject>(assembly.finalize());
-		/// TODO: fill out text representation
-		return object;
-	}
+		return assembleWithDeployed().first;
 	case Machine::Ewasm:
 	{
 		yulAssert(m_language == Language::Ewasm, "");
@@ -226,7 +239,42 @@ MachineAssemblyObject AssemblyStack::assemble(Machine _machine) const
 	return MachineAssemblyObject();
 }
 
-pair<MachineAssemblyObject, MachineAssemblyObject> AssemblyStack::assembleAndGuessRuntime() const
+std::pair<MachineAssemblyObject, MachineAssemblyObject>
+AssemblyStack::assembleWithDeployed(optional<string_view> _deployName) const
+{
+	auto [creationAssembly, deployedAssembly] = assembleEVMWithDeployed(_deployName);
+	yulAssert(creationAssembly, "");
+	yulAssert(m_charStream, "");
+
+	MachineAssemblyObject creationObject;
+	creationObject.bytecode = make_shared<evmasm::LinkerObject>(creationAssembly->assemble());
+	yulAssert(creationObject.bytecode->immutableReferences.empty(), "Leftover immutables.");
+	creationObject.assembly = creationAssembly->assemblyString();
+	creationObject.sourceMappings = make_unique<string>(
+		evmasm::AssemblyItem::computeSourceMapping(
+			creationAssembly->items(),
+			{{m_charStream->name(), 0}}
+		)
+	);
+
+	MachineAssemblyObject deployedObject;
+	if (deployedAssembly)
+	{
+		deployedObject.bytecode = make_shared<evmasm::LinkerObject>(deployedAssembly->assemble());
+		deployedObject.assembly = deployedAssembly->assemblyString();
+		deployedObject.sourceMappings = make_unique<string>(
+			evmasm::AssemblyItem::computeSourceMapping(
+				deployedAssembly->items(),
+				{{m_charStream->name(), 0}}
+			)
+		);
+	}
+
+	return {std::move(creationObject), std::move(deployedObject)};
+}
+
+std::pair<std::shared_ptr<evmasm::Assembly>, std::shared_ptr<evmasm::Assembly>>
+AssemblyStack::assembleEVMWithDeployed(optional<string_view> _deployName) const
 {
 	yulAssert(m_analysisSuccessful, "");
 	yulAssert(m_parserResult, "");
@@ -235,35 +283,35 @@ pair<MachineAssemblyObject, MachineAssemblyObject> AssemblyStack::assembleAndGue
 
 	evmasm::Assembly assembly;
 	EthAssemblyAdapter adapter(assembly);
-	compileEVM(adapter, false, m_optimiserSettings.optimizeStackAllocation);
+	compileEVM(adapter, m_optimiserSettings.optimizeStackAllocation);
 
-	MachineAssemblyObject creationObject;
-	creationObject.bytecode = make_shared<evmasm::LinkerObject>(assembly.assemble());
-	yulAssert(creationObject.bytecode->immutableReferences.empty(), "Leftover immutables.");
-	creationObject.assembly = assembly.assemblyString();
-	creationObject.sourceMappings = make_unique<string>(
-		evmasm::AssemblyItem::computeSourceMapping(
-			assembly.items(),
-			{{scanner().charStream() ? scanner().charStream()->name() : "", 0}}
-		)
-	);
+	assembly.optimise(translateOptimiserSettings(m_optimiserSettings, m_evmVersion));
 
-	MachineAssemblyObject runtimeObject;
-	// Heuristic: If there is a single sub-assembly, this is likely the runtime object.
-	if (assembly.numSubs() == 1)
+	optional<size_t> subIndex;
+
+	// Pick matching assembly if name was given
+	if (_deployName.has_value())
 	{
-		evmasm::Assembly& runtimeAssembly = assembly.sub(0);
-		runtimeObject.bytecode = make_shared<evmasm::LinkerObject>(runtimeAssembly.assemble());
-		runtimeObject.assembly = runtimeAssembly.assemblyString();
-		runtimeObject.sourceMappings = make_unique<string>(
-			evmasm::AssemblyItem::computeSourceMapping(
-				runtimeAssembly.items(),
-				{{scanner().charStream() ? scanner().charStream()->name() : "", 0}}
-			)
-		);
-	}
-	return {std::move(creationObject), std::move(runtimeObject)};
+		for (size_t i = 0; i < assembly.numSubs(); i++)
+			if (assembly.sub(i).name() == _deployName)
+			{
+				subIndex = i;
+				break;
+			}
 
+		solAssert(subIndex.has_value(), "Failed to find object to be deployed.");
+	}
+	// Otherwise use heuristic: If there is a single sub-assembly, this is likely the object to be deployed.
+	else if (assembly.numSubs() == 1)
+		subIndex = 0;
+
+	if (subIndex.has_value())
+	{
+		evmasm::Assembly& runtimeAssembly = assembly.sub(*subIndex);
+		return {make_shared<evmasm::Assembly>(assembly), make_shared<evmasm::Assembly>(runtimeAssembly)};
+	}
+
+	return {make_shared<evmasm::Assembly>(assembly), {}};
 }
 
 string AssemblyStack::print() const

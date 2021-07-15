@@ -23,13 +23,15 @@ from pygments_lexer_solidity import SolidityLexer, YulLexer
 # add these directories to sys.path here. If the directory is relative to the
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 
-def setup(sphinx):
-    thisdir = os.path.dirname(os.path.realpath(__file__))
-    sys.path.insert(0, thisdir + '/utils')
-    sphinx.add_lexer('Solidity', SolidityLexer())
-    sphinx.add_lexer('Yul', YulLexer())
+ROOT_PATH = os.path.dirname(os.path.realpath(__file__))
 
-    sphinx.add_stylesheet('css/custom.css')
+sys.path.insert(0, os.path.join(ROOT_PATH, 'ext'))
+
+def setup(sphinx):
+    sphinx.add_lexer('Solidity', SolidityLexer)
+    sphinx.add_lexer('Yul', YulLexer)
+
+    sphinx.add_css_file('css/custom.css')
 
 # -- General configuration ------------------------------------------------
 
@@ -39,7 +41,10 @@ def setup(sphinx):
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
-extensions = [ 'sphinx_a4doc' ]
+extensions = [
+    'sphinx_a4doc',
+    'html_extra_template_renderer',
+]
 
 a4_base_path = os.path.dirname(__file__) + '/grammar'
 
@@ -57,7 +62,7 @@ master_doc = 'index'
 
 # General information about the project.
 project = 'Solidity'
-copyright = '2016-2020, Ethereum'
+copyright = '2016-2021, Ethereum'
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
@@ -157,6 +162,19 @@ html_js_files = ["js/toggle.js"]
 # .htaccess) here, relative to this directory. These files are copied
 # directly to the root of the documentation.
 html_extra_path = ["_static/css"]
+
+# List of templates of static files to be included in the HTML output.
+# Keys represent paths to input files and values are dicts containing:
+# - target: The path where the rendered template should be placed.
+# - context: A dictionary listing variables that can be used inside the template.
+# All paths must be absolute.
+# Rendered templates are automatically added to html_extra_path setting.
+html_extra_templates = {
+    os.path.join(ROOT_PATH, "robots.txt.template"): {
+        'target': os.path.join(ROOT_PATH, "_static/robots.txt"),
+        'context': {'LATEST_VERSION': version},
+    }
+}
 
 # If not '', a 'Last updated on:' timestamp is inserted at every page bottom,
 # using the given strftime format.

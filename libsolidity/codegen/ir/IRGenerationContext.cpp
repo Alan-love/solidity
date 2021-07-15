@@ -30,7 +30,7 @@
 #include <libsolutil/Whiskers.h>
 #include <libsolutil/StringUtils.h>
 
-#include <boost/range/adaptor/map.hpp>
+#include <range/v3/view/map.hpp>
 
 using namespace std;
 using namespace solidity;
@@ -78,6 +78,11 @@ IRVariable const& IRGenerationContext::localVariable(VariableDeclaration const& 
 		"Unknown variable: " + _varDecl.name()
 	);
 	return m_localVariables.at(&_varDecl);
+}
+
+void IRGenerationContext::resetLocalVariables()
+{
+	m_localVariables.clear();
 }
 
 void IRGenerationContext::registerImmutableVariable(VariableDeclaration const& _variable)
@@ -128,7 +133,7 @@ void IRGenerationContext::initializeInternalDispatch(InternalDispatchMap _intern
 {
 	solAssert(internalDispatchClean(), "");
 
-	for (DispatchSet const& functions: _internalDispatch | boost::adaptors::map_values)
+	for (DispatchSet const& functions: _internalDispatch | ranges::views::values)
 		for (auto function: functions)
 			enqueueFunctionForCodeGeneration(*function);
 
@@ -173,7 +178,16 @@ ABIFunctions IRGenerationContext::abiFunctions()
 	return ABIFunctions(m_evmVersion, m_revertStrings, m_functions);
 }
 
-std::string IRGenerationContext::revertReasonIfDebug(std::string const& _message)
+uint64_t IRGenerationContext::internalFunctionID(FunctionDefinition const& _function, bool _requirePresent)
 {
-	return YulUtilFunctions::revertReasonIfDebug(m_revertStrings, _message);
+	auto [iterator, inserted] = m_functionIDs.try_emplace(_function.id(), m_functionIDs.size() + 1);
+	if (_requirePresent)
+			solAssert(!inserted, "");
+	return iterator->second;
+}
+
+void IRGenerationContext::copyFunctionIDsFrom(IRGenerationContext const& _other)
+{
+	solAssert(m_functionIDs.empty(), "");
+	m_functionIDs = _other.m_functionIDs;
 }

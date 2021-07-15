@@ -107,6 +107,99 @@ string YulUtilFunctions::copyToMemoryFunction(bool _fromCalldata)
 	});
 }
 
+string YulUtilFunctions::copyLiteralToMemoryFunction(string const& _literal)
+{
+	string functionName = "copy_literal_to_memory_" + util::toHex(util::keccak256(_literal).asBytes());
+
+	return m_functionCollector.createFunction(functionName, [&]() {
+		return Whiskers(R"(
+			function <functionName>() -> memPtr {
+				memPtr := <arrayAllocationFunction>(<size>)
+				<storeLiteralInMem>(add(memPtr, 32))
+			}
+			)")
+			("functionName", functionName)
+			("arrayAllocationFunction", allocateMemoryArrayFunction(*TypeProvider::array(DataLocation::Memory, true)))
+			("size", to_string(_literal.size()))
+			("storeLiteralInMem", storeLiteralInMemoryFunction(_literal))
+			.render();
+	});
+}
+
+string YulUtilFunctions::storeLiteralInMemoryFunction(string const& _literal)
+{
+	string functionName = "store_literal_in_memory_" + util::toHex(util::keccak256(_literal).asBytes());
+
+	return m_functionCollector.createFunction(functionName, [&]() {
+		size_t words = (_literal.length() + 31) / 32;
+		vector<map<string, string>> wordParams(words);
+		for (size_t i = 0; i < words; ++i)
+		{
+			wordParams[i]["offset"] = to_string(i * 32);
+			wordParams[i]["wordValue"] = formatAsStringOrNumber(_literal.substr(32 * i, 32));
+		}
+
+		return Whiskers(R"(
+			function <functionName>(memPtr) {
+				<#word>
+					mstore(add(memPtr, <offset>), <wordValue>)
+				</word>
+			}
+			)")
+			("functionName", functionName)
+			("word", wordParams)
+			.render();
+	});
+}
+
+string YulUtilFunctions::copyLiteralToStorageFunction(string const& _literal)
+{
+	string functionName = "copy_literal_to_storage_" + util::toHex(util::keccak256(_literal).asBytes());
+
+	return m_functionCollector.createFunction(functionName, [&](vector<string>& _args, vector<string>&) {
+		_args = {"slot"};
+
+		if (_literal.size() >= 32)
+		{
+			size_t words = (_literal.length() + 31) / 32;
+			vector<map<string, string>> wordParams(words);
+			for (size_t i = 0; i < words; ++i)
+			{
+				wordParams[i]["offset"] = to_string(i);
+				wordParams[i]["wordValue"] = formatAsStringOrNumber(_literal.substr(32 * i, 32));
+			}
+			return Whiskers(R"(
+				let oldLen := <byteArrayLength>(sload(slot))
+				<cleanUpArrayEnd>(slot, oldLen, <length>)
+				sstore(slot, <encodedLen>)
+				let dstPtr := <dataArea>(slot)
+				<#word>
+					sstore(add(dstPtr, <offset>), <wordValue>)
+				</word>
+			)")
+			("byteArrayLength", extractByteArrayLengthFunction())
+			("cleanUpArrayEnd", cleanUpDynamicByteArrayEndSlotsFunction(*TypeProvider::bytesStorage()))
+			("dataArea", arrayDataAreaFunction(*TypeProvider::bytesStorage()))
+			("word", wordParams)
+			("length", to_string(_literal.size()))
+			("encodedLen", to_string(2 * _literal.size() + 1))
+			.render();
+		}
+		else
+			return Whiskers(R"(
+				let oldLen := <byteArrayLength>(sload(slot))
+				<cleanUpArrayEnd>(slot, oldLen, <length>)
+				sstore(slot, add(<wordValue>, <encodedLen>))
+			)")
+			("byteArrayLength", extractByteArrayLengthFunction())
+			("cleanUpArrayEnd", cleanUpDynamicByteArrayEndSlotsFunction(*TypeProvider::bytesStorage()))
+			("wordValue", formatAsStringOrNumber(_literal))
+			("length", to_string(_literal.size()))
+			("encodedLen", to_string(2 * _literal.size()))
+			.render();
+	});
+}
+
 string YulUtilFunctions::requireOrAssertFunction(bool _assert, Type const* _messageType)
 {
 	string functionName =
@@ -122,7 +215,7 @@ string YulUtilFunctions::requireOrAssertFunction(bool _assert, Type const* _mess
 					if iszero(condition) { <error> }
 				}
 			)")
-			("error", _assert ? panicFunction() + "()" : "revert(0, 0)")
+			("error", _assert ? panicFunction(PanicCode::Assert) + "()" : "revert(0, 0)")
 			("functionName", functionName)
 			.render();
 
@@ -138,15 +231,15 @@ string YulUtilFunctions::requireOrAssertFunction(bool _assert, Type const* _mess
 		return Whiskers(R"(
 			function <functionName>(condition <messageVars>) {
 				if iszero(condition) {
-					let fmp := mload(<freeMemPointer>)
-					mstore(fmp, <errorHash>)
-					let end := <abiEncodeFunc>(add(fmp, <hashHeaderSize>) <messageVars>)
-					revert(fmp, sub(end, fmp))
+					let memPtr := <allocateUnbounded>()
+					mstore(memPtr, <errorHash>)
+					let end := <abiEncodeFunc>(add(memPtr, <hashHeaderSize>) <messageVars>)
+					revert(memPtr, sub(end, memPtr))
 				}
 			}
 		)")
 		("functionName", functionName)
-		("freeMemPointer", to_string(CompilerUtils::freeMemoryPointer))
+		("allocateUnbounded", allocateUnboundedFunction())
 		("errorHash", formatNumber(errorHash))
 		("abiEncodeFunc", encodeFunc)
 		("hashHeaderSize", to_string(hashHeaderSize))
@@ -203,8 +296,8 @@ string YulUtilFunctions::leftAlignFunction(Type const& _type)
 			break;
 		case Type::Category::Enum:
 		{
-			unsigned storageBytes = dynamic_cast<EnumType const&>(_type).storageBytes();
-			templ("body", "aligned := " + leftAlignFunction(IntegerType(8 * storageBytes)) + "(value)");
+			solAssert(dynamic_cast<EnumType const&>(_type).storageBytes() == 1, "");
+			templ("body", "aligned := " + leftAlignFunction(IntegerType(8)) + "(value)");
 			break;
 		}
 		case Type::Category::InaccessibleDynamic:
@@ -342,6 +435,7 @@ string YulUtilFunctions::shiftRightSignedFunctionDynamic()
 
 string YulUtilFunctions::typedShiftLeftFunction(Type const& _type, Type const& _amountType)
 {
+	solUnimplementedAssert(_type.category() != Type::Category::FixedPoint, "Not yet implemented - FixedPointType.");
 	solAssert(_type.category() == Type::Category::FixedBytes || _type.category() == Type::Category::Integer, "");
 	solAssert(_amountType.category() == Type::Category::Integer, "");
 	solAssert(!dynamic_cast<IntegerType const&>(_amountType).isSigned(), "");
@@ -364,6 +458,7 @@ string YulUtilFunctions::typedShiftLeftFunction(Type const& _type, Type const& _
 
 string YulUtilFunctions::typedShiftRightFunction(Type const& _type, Type const& _amountType)
 {
+	solUnimplementedAssert(_type.category() != Type::Category::FixedPoint, "Not yet implemented - FixedPointType.");
 	solAssert(_type.category() == Type::Category::FixedBytes || _type.category() == Type::Category::Integer, "");
 	solAssert(_amountType.category() == Type::Category::Integer, "");
 	solAssert(!dynamic_cast<IntegerType const&>(_amountType).isSigned(), "");
@@ -494,6 +589,18 @@ string YulUtilFunctions::roundUpFunction()
 	});
 }
 
+string YulUtilFunctions::divide32CeilFunction()
+{
+	return m_functionCollector.createFunction(
+		"divide_by_32_ceil",
+		[&](vector<string>& _args, vector<string>& _ret) {
+			_args = {"value"};
+			_ret = {"result"};
+			return "result := div(add(value, 31), 32)";
+		}
+	);
+}
+
 string YulUtilFunctions::overflowCheckedIntAddFunction(IntegerType const& _type)
 {
 	string functionName = "checked_add_" + _type.identifier();
@@ -523,7 +630,23 @@ string YulUtilFunctions::overflowCheckedIntAddFunction(IntegerType const& _type)
 			("maxValue", toCompactHexWithPrefix(u256(_type.maxValue())))
 			("minValue", toCompactHexWithPrefix(u256(_type.minValue())))
 			("cleanupFunction", cleanupFunction(_type))
-			("panic", panicFunction())
+			("panic", panicFunction(PanicCode::UnderOverflow))
+			.render();
+	});
+}
+
+string YulUtilFunctions::wrappingIntAddFunction(IntegerType const& _type)
+{
+	string functionName = "wrapping_add_" + _type.identifier();
+	return m_functionCollector.createFunction(functionName, [&]() {
+		return
+			Whiskers(R"(
+			function <functionName>(x, y) -> sum {
+				sum := <cleanupFunction>(add(x, y))
+			}
+			)")
+			("functionName", functionName)
+			("cleanupFunction", cleanupFunction(_type))
 			.render();
 	});
 }
@@ -559,7 +682,23 @@ string YulUtilFunctions::overflowCheckedIntMulFunction(IntegerType const& _type)
 			("maxValue", toCompactHexWithPrefix(u256(_type.maxValue())))
 			("minValue", toCompactHexWithPrefix(u256(_type.minValue())))
 			("cleanupFunction", cleanupFunction(_type))
-			("panic", panicFunction())
+			("panic", panicFunction(PanicCode::UnderOverflow))
+			.render();
+	});
+}
+
+string YulUtilFunctions::wrappingIntMulFunction(IntegerType const& _type)
+{
+	string functionName = "wrapping_mul_" + _type.identifier();
+	return m_functionCollector.createFunction(functionName, [&]() {
+		return
+			Whiskers(R"(
+			function <functionName>(x, y) -> product {
+				product := <cleanupFunction>(mul(x, y))
+			}
+			)")
+			("functionName", functionName)
+			("cleanupFunction", cleanupFunction(_type))
 			.render();
 	});
 }
@@ -573,13 +712,13 @@ string YulUtilFunctions::overflowCheckedIntDivFunction(IntegerType const& _type)
 			function <functionName>(x, y) -> r {
 				x := <cleanupFunction>(x)
 				y := <cleanupFunction>(y)
-				if iszero(y) { <panic>() }
+				if iszero(y) { <panicDivZero>() }
 				<?signed>
 				// overflow for minVal / -1
 				if and(
 					eq(x, <minVal>),
 					eq(y, sub(0, 1))
-				) { <panic>() }
+				) { <panicOverflow>() }
 				</signed>
 				r := <?signed>s</signed>div(x, y)
 			}
@@ -588,14 +727,36 @@ string YulUtilFunctions::overflowCheckedIntDivFunction(IntegerType const& _type)
 			("signed", _type.isSigned())
 			("minVal", toCompactHexWithPrefix(u256(_type.minValue())))
 			("cleanupFunction", cleanupFunction(_type))
-			("panic", panicFunction())
+			("panicDivZero", panicFunction(PanicCode::DivisionByZero))
+			("panicOverflow", panicFunction(PanicCode::UnderOverflow))
 			.render();
 	});
 }
 
-string YulUtilFunctions::checkedIntModFunction(IntegerType const& _type)
+string YulUtilFunctions::wrappingIntDivFunction(IntegerType const& _type)
 {
-	string functionName = "checked_mod_" + _type.identifier();
+	string functionName = "wrapping_div_" + _type.identifier();
+	return m_functionCollector.createFunction(functionName, [&]() {
+		return
+			Whiskers(R"(
+			function <functionName>(x, y) -> r {
+				x := <cleanupFunction>(x)
+				y := <cleanupFunction>(y)
+				if iszero(y) { <error>() }
+				r := <?signed>s</signed>div(x, y)
+			}
+			)")
+			("functionName", functionName)
+			("cleanupFunction", cleanupFunction(_type))
+			("signed", _type.isSigned())
+			("error", panicFunction(PanicCode::DivisionByZero))
+			.render();
+	});
+}
+
+string YulUtilFunctions::intModFunction(IntegerType const& _type)
+{
+	string functionName = "mod_" + _type.identifier();
 	return m_functionCollector.createFunction(functionName, [&]() {
 		return
 			Whiskers(R"(
@@ -609,7 +770,7 @@ string YulUtilFunctions::checkedIntModFunction(IntegerType const& _type)
 			("functionName", functionName)
 			("signed", _type.isSigned())
 			("cleanupFunction", cleanupFunction(_type))
-			("panic", panicFunction())
+			("panic", panicFunction(PanicCode::DivisionByZero))
 			.render();
 	});
 }
@@ -639,7 +800,23 @@ string YulUtilFunctions::overflowCheckedIntSubFunction(IntegerType const& _type)
 			("maxValue", toCompactHexWithPrefix(u256(_type.maxValue())))
 			("minValue", toCompactHexWithPrefix(u256(_type.minValue())))
 			("cleanupFunction", cleanupFunction(_type))
-			("panic", panicFunction())
+			("panic", panicFunction(PanicCode::UnderOverflow))
+			.render();
+	});
+}
+
+string YulUtilFunctions::wrappingIntSubFunction(IntegerType const& _type)
+{
+	string functionName = "wrapping_sub_" + _type.identifier();
+	return m_functionCollector.createFunction(functionName, [&] {
+		return
+			Whiskers(R"(
+			function <functionName>(x, y) -> diff {
+				diff := <cleanupFunction>(sub(x, y))
+			}
+			)")
+			("functionName", functionName)
+			("cleanupFunction", cleanupFunction(_type))
 			.render();
 	});
 }
@@ -784,7 +961,7 @@ string YulUtilFunctions::overflowCheckedIntLiteralExpFunction(
 			("exponentCleanupFunction", cleanupFunction(_exponentType))
 			("needsOverflowCheck", needsOverflowCheck)
 			("exponentUpperbound", to_string(exponentUpperbound))
-			("panic", panicFunction())
+			("panic", panicFunction(PanicCode::UnderOverflow))
 			("base", bigint2u(baseValue).str())
 			.render();
 	});
@@ -842,9 +1019,8 @@ string YulUtilFunctions::overflowCheckedUnsignedExpFunction()
 			}
 			)")
 			("functionName", functionName)
-			("panic", panicFunction())
+			("panic", panicFunction(PanicCode::UnderOverflow))
 			("expLoop", overflowCheckedExpLoopFunction())
-			("shr_1", shiftRightFunction(1))
 			.render();
 	});
 }
@@ -892,7 +1068,7 @@ string YulUtilFunctions::overflowCheckedSignedExpFunction()
 			}
 			)")
 			("functionName", functionName)
-			("panic", panicFunction())
+			("panic", panicFunction(PanicCode::UnderOverflow))
 			("expLoop", overflowCheckedExpLoopFunction())
 			("shr_1", shiftRightFunction(1))
 			.render();
@@ -933,28 +1109,33 @@ string YulUtilFunctions::overflowCheckedExpLoopFunction()
 			}
 			)")
 			("functionName", functionName)
-			("panic", panicFunction())
+			("panic", panicFunction(PanicCode::UnderOverflow))
 			("shr_1", shiftRightFunction(1))
 			.render();
 	});
 }
 
-string YulUtilFunctions::extractByteArrayLengthFunction()
+string YulUtilFunctions::wrappingIntExpFunction(
+	IntegerType const& _type,
+	IntegerType const& _exponentType
+)
 {
-	string functionName = "extract_byte_array_length";
+	solAssert(!_exponentType.isSigned(), "");
+
+	string functionName = "wrapping_exp_" + _type.identifier() + "_" + _exponentType.identifier();
 	return m_functionCollector.createFunction(functionName, [&]() {
-		Whiskers w(R"(
-			function <functionName>(data) -> length {
-				// Retrieve length both for in-place strings and off-place strings:
-				// Computes (x & (0x100 * (ISZERO (x & 1)) - 1)) / 2
-				// i.e. for short strings (x & 1 == 0) it does (x & 0xff) / 2 and for long strings it
-				// computes (x & (-1)) / 2, which is equivalent to just x / 2.
-				let mask := sub(mul(0x100, iszero(and(data, 1))), 1)
-				length := div(and(data, mask), 2)
+		return
+			Whiskers(R"(
+			function <functionName>(base, exponent) -> power {
+				base := <baseCleanupFunction>(base)
+				exponent := <exponentCleanupFunction>(exponent)
+				power := <baseCleanupFunction>(exp(base, exponent))
 			}
-		)");
-		w("functionName", functionName);
-		return w.render();
+			)")
+			("functionName", functionName)
+			("baseCleanupFunction", cleanupFunction(_type))
+			("exponentCleanupFunction", cleanupFunction(_exponentType))
+			.render();
 	});
 }
 
@@ -1000,6 +1181,29 @@ string YulUtilFunctions::arrayLengthFunction(ArrayType const& _type)
 	});
 }
 
+string YulUtilFunctions::extractByteArrayLengthFunction()
+{
+	string functionName = "extract_byte_array_length";
+	return m_functionCollector.createFunction(functionName, [&]() {
+		Whiskers w(R"(
+			function <functionName>(data) -> length {
+				length := div(data, 2)
+				let outOfPlaceEncoding := and(data, 1)
+				if iszero(outOfPlaceEncoding) {
+					length := and(length, 0x7f)
+				}
+
+				if eq(outOfPlaceEncoding, lt(length, 32)) {
+					<panic>()
+				}
+			}
+		)");
+		w("functionName", functionName);
+		w("panic", panicFunction(PanicCode::StorageEncodingError));
+		return w.render();
+	});
+}
+
 std::string YulUtilFunctions::resizeArrayFunction(ArrayType const& _type)
 {
 	solAssert(_type.location() == DataLocation::Storage, "");
@@ -1010,7 +1214,7 @@ std::string YulUtilFunctions::resizeArrayFunction(ArrayType const& _type)
 
 	string functionName = "resize_array_" + _type.identifier();
 	return m_functionCollector.createFunction(functionName, [&]() {
-		return Whiskers(R"(
+		Whiskers templ(R"(
 			function <functionName>(array, newLen) {
 				if gt(newLen, <maxArrayLength>) {
 					<panic>()
@@ -1023,66 +1227,106 @@ std::string YulUtilFunctions::resizeArrayFunction(ArrayType const& _type)
 					sstore(array, newLen)
 				</isDynamic>
 
+				<?needsClearing>
+					<cleanUpArrayEnd>(array, oldLen, newLen)
+				</needsClearing>
+			})");
+			templ("functionName", functionName);
+			templ("maxArrayLength", (u256(1) << 64).str());
+			templ("panic", panicFunction(util::PanicCode::ResourceError));
+			templ("fetchLength", arrayLengthFunction(_type));
+			templ("isDynamic", _type.isDynamicallySized());
+			bool isMappingBase = _type.baseType()->category() == Type::Category::Mapping;
+			templ("needsClearing", !isMappingBase);
+			if (!isMappingBase)
+				templ("cleanUpArrayEnd", cleanUpStorageArrayEndFunction(_type));
+			return templ.render();
+	});
+}
+
+string YulUtilFunctions::cleanUpStorageArrayEndFunction(ArrayType const& _type)
+{
+	solAssert(_type.location() == DataLocation::Storage, "");
+	solAssert(_type.baseType()->category() != Type::Category::Mapping, "");
+	solAssert(!_type.isByteArray(), "");
+	solUnimplementedAssert(_type.baseType()->storageBytes() <= 32, "");
+
+	string functionName = "cleanup_storage_array_end_" + _type.identifier();
+	return m_functionCollector.createFunction(functionName, [&](vector<string>& _args, vector<string>&) {
+		_args = {"array", "len", "startIndex"};
+		return Whiskers(R"(
+			if lt(startIndex, len) {
 				// Size was reduced, clear end of array
-				if lt(newLen, oldLen) {
-					let oldSlotCount := <convertToSize>(oldLen)
-					let newSlotCount := <convertToSize>(newLen)
-					let arrayDataStart := <dataPosition>(array)
-					let deleteStart := add(arrayDataStart, newSlotCount)
-					let deleteEnd := add(arrayDataStart, oldSlotCount)
-					<?packed>
-						// if we are dealing with packed array and offset is greater than zero
-						// we have  to partially clear last slot that is still used, so decreasing start by one
-						let offset := mul(mod(newLen, <itemsPerSlot>), <storageBytes>)
-						if gt(offset, 0) { <partialClearStorageSlot>(sub(deleteStart, 1), offset) }
-					</packed>
-					<clearStorageRange>(deleteStart, deleteEnd)
-				}
-			})")
-			("functionName", functionName)
-			("panic", panicFunction())
-			("fetchLength", arrayLengthFunction(_type))
-			("isDynamic", _type.isDynamicallySized())
-			("convertToSize", arrayConvertLengthToSize(_type))
-			("dataPosition", arrayDataAreaFunction(_type))
-			("clearStorageRange", clearStorageRangeFunction(*_type.baseType()))
-			("maxArrayLength", (u256(1) << 64).str())
-			("packed", _type.baseType()->storageBytes() <= 16)
-			("itemsPerSlot", to_string(32 / _type.baseType()->storageBytes()))
-			("storageBytes", to_string(_type.baseType()->storageBytes()))
-			("partialClearStorageSlot", partialClearStorageSlotFunction())
-			.render();
+				let oldSlotCount := <convertToSize>(len)
+				let newSlotCount := <convertToSize>(startIndex)
+				let arrayDataStart := <dataPosition>(array)
+				let deleteStart := add(arrayDataStart, newSlotCount)
+				let deleteEnd := add(arrayDataStart, oldSlotCount)
+				<?packed>
+					// if we are dealing with packed array and offset is greater than zero
+					// we have  to partially clear last slot that is still used, so decreasing start by one
+					let offset := mul(mod(startIndex, <itemsPerSlot>), <storageBytes>)
+					if gt(offset, 0) { <partialClearStorageSlot>(sub(deleteStart, 1), offset) }
+				</packed>
+				<clearStorageRange>(deleteStart, deleteEnd)
+			}
+		)")
+		("convertToSize", arrayConvertLengthToSize(_type))
+		("dataPosition", arrayDataAreaFunction(_type))
+		("clearStorageRange", clearStorageRangeFunction(*_type.baseType()))
+		("packed", _type.baseType()->storageBytes() <= 16)
+		("itemsPerSlot", to_string(32 / _type.baseType()->storageBytes()))
+		("storageBytes", to_string(_type.baseType()->storageBytes()))
+		("partialClearStorageSlot", partialClearStorageSlotFunction())
+		.render();
 	});
 }
 
 string YulUtilFunctions::resizeDynamicByteArrayFunction(ArrayType const& _type)
 {
 	string functionName = "resize_array_" + _type.identifier();
-	return m_functionCollector.createFunction(functionName, [&]() {
+	return m_functionCollector.createFunction(functionName, [&](vector<string>& _args, vector<string>&) {
+		_args = {"array", "newLen"};
 		return Whiskers(R"(
-			function <functionName>(array, newLen) {
-				if gt(newLen, <maxArrayLength>) {
-					<panic>()
-				}
+			let data := sload(array)
+			let oldLen := <extractLength>(data)
 
-				let data := sload(array)
-				let oldLen := <extractLength>(data)
+			if gt(newLen, oldLen) {
+				<increaseSize>(array, data, oldLen, newLen)
+			}
 
-				if gt(newLen, oldLen) {
-					<increaseSize>(array, data, oldLen, newLen)
-				}
+			if lt(newLen, oldLen) {
+				<decreaseSize>(array, data, oldLen, newLen)
+			}
+		)")
+		("extractLength", extractByteArrayLengthFunction())
+		("decreaseSize", decreaseByteArraySizeFunction(_type))
+		("increaseSize", increaseByteArraySizeFunction(_type))
+		.render();
+	});
+}
 
-				if lt(newLen, oldLen) {
-					<decreaseSize>(array, data, oldLen, newLen)
-				}
-			})")
-			("functionName", functionName)
-			("panic", panicFunction())
-			("extractLength", extractByteArrayLengthFunction())
-			("maxArrayLength", (u256(1) << 64).str())
-			("decreaseSize", decreaseByteArraySizeFunction(_type))
-			("increaseSize", increaseByteArraySizeFunction(_type))
-			.render();
+string YulUtilFunctions::cleanUpDynamicByteArrayEndSlotsFunction(ArrayType const& _type)
+{
+	solAssert(_type.isByteArray(), "");
+	solAssert(_type.isDynamicallySized(), "");
+
+	string functionName = "clean_up_bytearray_end_slots_" + _type.identifier();
+	return m_functionCollector.createFunction(functionName, [&](vector<string>& _args, vector<string>&) {
+		_args = {"array", "len", "startIndex"};
+		return Whiskers(R"(
+			if gt(len, 31) {
+				let dataArea := <dataLocation>(array)
+				let deleteStart := add(dataArea, <div32Ceil>(startIndex))
+				// If we are clearing array to be short byte array, we want to clear only data starting from array data area.
+				if lt(startIndex, 32) { deleteStart := dataArea }
+				<clearStorageRange>(deleteStart, add(dataArea, <div32Ceil>(len)))
+			}
+		)")
+		("dataLocation", arrayDataAreaFunction(_type))
+		("div32Ceil", divide32CeilFunction())
+		("clearStorageRange", clearStorageRangeFunction(*_type.baseType()))
+		.render();
 	});
 }
 
@@ -1095,13 +1339,13 @@ string YulUtilFunctions::decreaseByteArraySizeFunction(ArrayType const& _type)
 				switch lt(newLen, 32)
 				case  0 {
 					let arrayDataStart := <dataPosition>(array)
-					let deleteStart := add(arrayDataStart, div(add(newLen, 31), 32))
+					let deleteStart := add(arrayDataStart, <div32Ceil>(newLen))
 
 					// we have to partially clear last slot that is still used
 					let offset := and(newLen, 0x1f)
 					if offset { <partialClearStorageSlot>(sub(deleteStart, 1), offset) }
 
-					<clearStorageRange>(deleteStart, add(arrayDataStart, div(add(oldLen, 31), 32)))
+					<clearStorageRange>(deleteStart, add(arrayDataStart, <div32Ceil>(oldLen)))
 
 					sstore(array, or(mul(2, newLen), 1))
 				}
@@ -1110,7 +1354,7 @@ string YulUtilFunctions::decreaseByteArraySizeFunction(ArrayType const& _type)
 					case 1 {
 						let arrayDataStart := <dataPosition>(array)
 						// clear whole old array, as we are transforming to short bytes array
-						<clearStorageRange>(add(arrayDataStart, 1), add(arrayDataStart, div(add(oldLen, 31), 32)))
+						<clearStorageRange>(add(arrayDataStart, 1), add(arrayDataStart, <div32Ceil>(oldLen)))
 						<transitLongToShort>(array, newLen)
 					}
 					default {
@@ -1123,6 +1367,7 @@ string YulUtilFunctions::decreaseByteArraySizeFunction(ArrayType const& _type)
 			("partialClearStorageSlot", partialClearStorageSlotFunction())
 			("clearStorageRange", clearStorageRangeFunction(*_type.baseType()))
 			("transitLongToShort", byteArrayTransitLongToShortFunction(_type))
+			("div32Ceil", divide32CeilFunction())
 			("encodeUsedSetLen", shortByteArrayEncodeUsedAreaSetLengthFunction())
 			.render();
 	});
@@ -1131,32 +1376,35 @@ string YulUtilFunctions::decreaseByteArraySizeFunction(ArrayType const& _type)
 string YulUtilFunctions::increaseByteArraySizeFunction(ArrayType const& _type)
 {
 	string functionName = "byte_array_increase_size_" + _type.identifier();
-	return m_functionCollector.createFunction(functionName, [&]() {
+	return m_functionCollector.createFunction(functionName, [&](vector<string>& _args, vector<string>&) {
+		_args = {"array", "data", "oldLen", "newLen"};
 		return Whiskers(R"(
-			function <functionName>(array, data, oldLen, newLen) {
-				switch lt(oldLen, 32)
+			if gt(newLen, <maxArrayLength>) { <panic>() }
+
+			switch lt(oldLen, 32)
+			case 0 {
+				// in this case array stays unpacked, so we just set new length
+				sstore(array, add(mul(2, newLen), 1))
+			}
+			default {
+				switch lt(newLen, 32)
 				case 0 {
-					// in this case array stays unpacked, so we just set new length
+					// we need to copy elements to data area as we changed array from packed to unpacked
+					data := and(not(0xff), data)
+					sstore(<dataPosition>(array), data)
 					sstore(array, add(mul(2, newLen), 1))
 				}
 				default {
-					switch lt(newLen, 32)
-					case 0 {
-						// we need to copy elements to data area as we changed array from packed to unpacked
-						data := and(not(0xff), data)
-						sstore(<dataPosition>(array), data)
-						sstore(array, add(mul(2, newLen), 1))
-					}
-					default {
-						// here array stays packed, we just need to increase length
-						sstore(array, <encodeUsedSetLen>(data, newLen))
-					}
+					// here array stays packed, we just need to increase length
+					sstore(array, <encodeUsedSetLen>(data, newLen))
 				}
-			})")
-			("functionName", functionName)
-			("dataPosition", arrayDataAreaFunction(_type))
-			("encodeUsedSetLen", shortByteArrayEncodeUsedAreaSetLengthFunction())
-			.render();
+			}
+		)")
+		("panic", panicFunction(PanicCode::ResourceError))
+		("maxArrayLength", (u256(1) << 64).str())
+		("dataPosition", arrayDataAreaFunction(_type))
+		("encodeUsedSetLen", shortByteArrayEncodeUsedAreaSetLengthFunction())
+		.render();
 	});
 }
 
@@ -1176,8 +1424,6 @@ string YulUtilFunctions::byteArrayTransitLongToShortFunction(ArrayType const& _t
 			("functionName", functionName)
 			("dataPosition", arrayDataAreaFunction(_type))
 			("extractUsedApplyLen", shortByteArrayEncodeUsedAreaSetLengthFunction())
-			("shl", shiftLeftFunctionDynamic())
-			("ones", formatNumber((bigint(1) << 256) - 1))
 			.render();
 	});
 }
@@ -1199,6 +1445,24 @@ string YulUtilFunctions::shortByteArrayEncodeUsedAreaSetLengthFunction()
 	});
 }
 
+string YulUtilFunctions::longByteArrayStorageIndexAccessNoCheckFunction()
+{
+	return m_functionCollector.createFunction(
+		"long_byte_array_index_access_no_checks",
+		[&](vector<string>& _args, vector<string>& _returnParams) {
+			_args = {"array", "index"};
+			_returnParams = {"slot", "offset"};
+			return Whiskers(R"(
+				offset := sub(31, mod(index, 0x20))
+				let dataArea := <dataAreaFunc>(array)
+				slot := add(dataArea, div(index, 0x20))
+			)")
+			("dataAreaFunc", arrayDataAreaFunction(*TypeProvider::bytesStorage()))
+			.render();
+		}
+	);
+}
+
 string YulUtilFunctions::storageArrayPopFunction(ArrayType const& _type)
 {
 	solAssert(_type.location() == DataLocation::Storage, "");
@@ -1215,14 +1479,17 @@ string YulUtilFunctions::storageArrayPopFunction(ArrayType const& _type)
 				if iszero(oldLen) { <panic>() }
 				let newLen := sub(oldLen, 1)
 				let slot, offset := <indexAccess>(array, newLen)
-				<setToZero>(slot, offset)
+				<?+setToZero><setToZero>(slot, offset)</+setToZero>
 				sstore(array, newLen)
 			})")
 			("functionName", functionName)
-			("panic", panicFunction())
+			("panic", panicFunction(PanicCode::EmptyArrayPop))
 			("fetchLength", arrayLengthFunction(_type))
 			("indexAccess", storageArrayIndexAccessFunction(_type))
-			("setToZero", storageSetToZeroFunction(*_type.baseType()))
+			(
+				"setToZero",
+				_type.baseType()->category() != Type::Category::Mapping ? storageSetToZeroFunction(*_type.baseType()) : ""
+			)
 			.render();
 	});
 }
@@ -1254,33 +1521,40 @@ string YulUtilFunctions::storageByteArrayPopFunction(ArrayType const& _type)
 						sstore(array, <encodeUsedSetLen>(data, newLen))
 					}
 					default {
-						let slot, offset := <indexAccess>(array, newLen)
+						let slot, offset := <indexAccessNoChecks>(array, newLen)
 						<setToZero>(slot, offset)
 						sstore(array, sub(data, 2))
 					}
 				}
 			})")
 			("functionName", functionName)
-			("panic", panicFunction())
+			("panic", panicFunction(PanicCode::EmptyArrayPop))
 			("extractByteArrayLength", extractByteArrayLengthFunction())
 			("transitLongToShort", byteArrayTransitLongToShortFunction(_type))
 			("encodeUsedSetLen", shortByteArrayEncodeUsedAreaSetLengthFunction())
-			("indexAccess", storageArrayIndexAccessFunction(_type))
+			("indexAccessNoChecks", longByteArrayStorageIndexAccessNoCheckFunction())
 			("setToZero", storageSetToZeroFunction(*_type.baseType()))
-			("shl", shiftLeftFunctionDynamic())
 			.render();
 	});
 }
 
-string YulUtilFunctions::storageArrayPushFunction(ArrayType const& _type)
+string YulUtilFunctions::storageArrayPushFunction(ArrayType const& _type, Type const* _fromType)
 {
 	solAssert(_type.location() == DataLocation::Storage, "");
 	solAssert(_type.isDynamicallySized(), "");
+	if (!_fromType)
+		_fromType = _type.baseType();
+	else if (_fromType->isValueType())
+		solUnimplementedAssert(*_fromType == *_type.baseType(), "");
 
-	string functionName = "array_push_" + _type.identifier();
+	string functionName =
+		string{"array_push_from_"} +
+		_fromType->identifier() +
+		"_to_" +
+		_type.identifier();
 	return m_functionCollector.createFunction(functionName, [&]() {
 		return Whiskers(R"(
-			function <functionName>(array, value) {
+			function <functionName>(array <values>) {
 				<?isByteArray>
 					let data := sload(array)
 					let oldLen := <extractByteArrayLength>(data)
@@ -1288,7 +1562,7 @@ string YulUtilFunctions::storageArrayPushFunction(ArrayType const& _type)
 
 					switch gt(oldLen, 31)
 					case 0 {
-						value := byte(0, value)
+						let value := byte(0 <values>)
 						switch oldLen
 						case 31 {
 							// Here we have special case when array switches from short array to long array
@@ -1311,26 +1585,26 @@ string YulUtilFunctions::storageArrayPushFunction(ArrayType const& _type)
 					default {
 						sstore(array, add(data, 2))
 						let slot, offset := <indexAccess>(array, oldLen)
-						<storeValue>(slot, offset, value)
+						<storeValue>(slot, offset <values>)
 					}
 				<!isByteArray>
 					let oldLen := sload(array)
 					if iszero(lt(oldLen, <maxArrayLength>)) { <panic>() }
 					sstore(array, add(oldLen, 1))
 					let slot, offset := <indexAccess>(array, oldLen)
-					<storeValue>(slot, offset, value)
+					<storeValue>(slot, offset <values>)
 				</isByteArray>
 			})")
 			("functionName", functionName)
-			("panic", panicFunction())
+			("values", _fromType->sizeOnStack() == 0 ? "" : ", " + suffixedVariableNameList("value", 0, _fromType->sizeOnStack()))
+			("panic", panicFunction(PanicCode::ResourceError))
 			("extractByteArrayLength", _type.isByteArray() ? extractByteArrayLengthFunction() : "")
 			("dataAreaFunction", arrayDataAreaFunction(_type))
 			("isByteArray", _type.isByteArray())
 			("indexAccess", storageArrayIndexAccessFunction(_type))
-			("storeValue", updateStorageValueFunction(*_type.baseType(), *_type.baseType()))
+			("storeValue", updateStorageValueFunction(*_fromType, *_type.baseType()))
 			("maxArrayLength", (u256(1) << 64).str())
 			("shl", shiftLeftFunctionDynamic())
-			("shr", shiftRightFunction(248))
 			.render();
 	});
 }
@@ -1360,7 +1634,7 @@ string YulUtilFunctions::storageArrayPushZeroFunction(ArrayType const& _type)
 			("isBytes", _type.isByteArray())
 			("increaseBytesSize", _type.isByteArray() ? increaseByteArraySizeFunction(_type) : "")
 			("extractLength", _type.isByteArray() ? extractByteArrayLengthFunction() : "")
-			("panic", panicFunction())
+			("panic", panicFunction(PanicCode::ResourceError))
 			("fetchLength", arrayLengthFunction(_type))
 			("indexAccess", storageArrayIndexAccessFunction(_type))
 			("maxArrayLength", (u256(1) << 64).str())
@@ -1429,7 +1703,7 @@ string YulUtilFunctions::clearStorageArrayFunction(ArrayType const& _type)
 				<?dynamic>
 					<resizeArray>(slot, 0)
 				<!dynamic>
-					<clearRange>(slot, add(slot, <lenToSize>(<len>)))
+					<?+clearRange><clearRange>(slot, add(slot, <lenToSize>(<len>)))</+clearRange>
 				</dynamic>
 			}
 		)")
@@ -1438,11 +1712,9 @@ string YulUtilFunctions::clearStorageArrayFunction(ArrayType const& _type)
 		("resizeArray", _type.isDynamicallySized() ? resizeArrayFunction(_type) : "")
 		(
 			"clearRange",
-			clearStorageRangeFunction(
-				(_type.baseType()->storageBytes() < 32) ?
-				*TypeProvider::uint256() :
-				*_type.baseType()
-			)
+			_type.baseType()->category() != Type::Category::Mapping ?
+			clearStorageRangeFunction((_type.baseType()->storageBytes() < 32) ? *TypeProvider::uint256() : *_type.baseType()) :
+			""
 		)
 		("lenToSize", arrayConvertLengthToSize(_type))
 		("len", _type.length().str())
@@ -1462,6 +1734,9 @@ string YulUtilFunctions::clearStorageStructFunction(StructType const& _type)
 
 		set<u256> slotsCleared;
 		for (auto const& member: structMembers)
+		{
+			if (member.type->category() == Type::Category::Mapping)
+				continue;
 			if (member.type->storageBytes() < 32)
 			{
 				auto const& slotDiff = _type.storageOffsetsOfMember(member.name).first;
@@ -1485,6 +1760,7 @@ string YulUtilFunctions::clearStorageStructFunction(StructType const& _type)
 					.render()
 				);
 			}
+		}
 
 		return Whiskers(R"(
 			function <functionName>(slot) {
@@ -1494,8 +1770,6 @@ string YulUtilFunctions::clearStorageStructFunction(StructType const& _type)
 			}
 		)")
 		("functionName", functionName)
-		("allocStruct", allocateMemoryStructFunction(_type))
-		("storageSize", _type.storageSize().str())
 		("member", memberSetValues)
 		.render();
 	});
@@ -1579,7 +1853,6 @@ string YulUtilFunctions::copyArrayToStorageFunction(ArrayType const& _fromType, 
 		templ("srcDataLocation", arrayDataAreaFunction(_fromType));
 		if (fromCalldata)
 		{
-			templ("dynamicallySizedBase", _fromType.baseType()->isDynamicallySized());
 			templ("dynamicallyEncodedBase", _fromType.baseType()->isDynamicallyEncoded());
 			if (_fromType.baseType()->isDynamicallyEncoded())
 				templ("accessCalldataTail", accessCalldataTailFunction(*_fromType.baseType()));
@@ -1633,28 +1906,19 @@ string YulUtilFunctions::copyByteArrayToStorageFunction(ArrayType const& _fromTy
 
 				let oldLen := <byteArrayLength>(sload(slot))
 
+				// potentially truncate data
+				<cleanUpEndArray>(slot, oldLen, newLen)
+
 				let srcOffset := 0
 				<?fromMemory>
 					srcOffset := 0x20
 				</fromMemory>
 
-				// This is not needed in all branches.
-				let dstDataArea
-				if or(gt(oldLen, 31), gt(newLen, 31)) {
-					dstDataArea := <dstDataLocation>(slot)
-				}
-
-				if gt(oldLen, 31) {
-					// potentially truncate data
-					let deleteStart := add(dstDataArea, div(add(newLen, 31), 32))
-					if lt(newLen, 32) { deleteStart := dstDataArea }
-					<clearStorageRange>(deleteStart, add(dstDataArea, div(add(oldLen, 31), 32)))
-				}
 				switch gt(newLen, 31)
 				case 1 {
 					let loopEnd := and(newLen, not(0x1f))
 					<?fromStorage> src := <srcDataLocation>(src) </fromStorage>
-					let dstPtr := dstDataArea
+					let dstPtr := <dstDataLocation>(slot)
 					let i := 0
 					for { } lt(i, loopEnd) { i := add(i, 0x20) } {
 						sstore(dstPtr, <read>(add(src, srcOffset)))
@@ -1683,12 +1947,12 @@ string YulUtilFunctions::copyByteArrayToStorageFunction(ArrayType const& _fromTy
 		templ("fromMemory", _fromType.dataStoredIn(DataLocation::Memory));
 		templ("fromCalldata", fromCalldata);
 		templ("arrayLength", arrayLengthFunction(_fromType));
-		templ("panic", panicFunction());
+		templ("panic", panicFunction(PanicCode::ResourceError));
 		templ("byteArrayLength", extractByteArrayLengthFunction());
 		templ("dstDataLocation", arrayDataAreaFunction(_toType));
 		if (fromStorage)
 			templ("srcDataLocation", arrayDataAreaFunction(_fromType));
-		templ("clearStorageRange", clearStorageRangeFunction(*_toType.baseType()));
+		templ("cleanUpEndArray", cleanUpDynamicByteArrayEndSlotsFunction(_toType));
 		templ("srcIncrement", to_string(fromStorage ? 1 : 0x20));
 		templ("read", fromStorage ? "sload" : fromCalldata ? "calldataload" : "mload");
 		templ("maskBytes", maskBytesFunctionDynamic());
@@ -1701,15 +1965,17 @@ string YulUtilFunctions::copyByteArrayToStorageFunction(ArrayType const& _fromTy
 
 string YulUtilFunctions::copyValueArrayStorageToStorageFunction(ArrayType const& _fromType, ArrayType const& _toType)
 {
-	solAssert(
-		*_fromType.copyForLocation(_toType.location(), _toType.isPointer()) == dynamic_cast<ReferenceType const&>(_toType),
-		""
-	);
+	solAssert(_fromType.baseType()->isValueType(), "");
+	solAssert(_toType.baseType()->isValueType(), "");
+	solAssert(_fromType.baseType()->isImplicitlyConvertibleTo(*_toType.baseType()), "");
+
 	solAssert(!_fromType.isByteArray(), "");
-	solAssert(_fromType.dataStoredIn(DataLocation::Storage) && _toType.baseType()->isValueType(), "");
+	solAssert(!_toType.isByteArray(), "");
+	solAssert(_fromType.dataStoredIn(DataLocation::Storage), "");
 	solAssert(_toType.dataStoredIn(DataLocation::Storage), "");
 
-	solUnimplementedAssert(_fromType.storageStride() == _toType.storageStride(), "");
+	solAssert(_fromType.storageStride() <= _toType.storageStride(), "");
+	solAssert(_toType.storageStride() <= 32, "");
 
 	string functionName = "copy_array_to_storage_from_" + _fromType.identifier() + "_to_" + _toType.identifier();
 	return m_functionCollector.createFunction(functionName, [&](){
@@ -1721,19 +1987,60 @@ string YulUtilFunctions::copyValueArrayStorageToStorageFunction(ArrayType const&
 				if gt(length, 0xffffffffffffffff) { <panic>() }
 				<resizeArray>(dst, length)
 
-				let srcPtr := <srcDataLocation>(src)
-
-				let dstPtr := <dstDataLocation>(dst)
+				let srcSlot := <srcDataLocation>(src)
+				let dstSlot := <dstDataLocation>(dst)
 
 				let fullSlots := div(length, <itemsPerSlot>)
-				let i := 0
-				for { } lt(i, fullSlots) { i := add(i, 1) } {
-					sstore(add(dstPtr, i), <maskFull>(sload(add(srcPtr, i))))
+
+				let srcSlotValue := sload(srcSlot)
+				let srcItemIndexInSlot := 0
+				for { let i := 0 } lt(i, fullSlots) { i := add(i, 1) } {
+					let dstSlotValue := 0
+					<?sameType>
+						dstSlotValue := <maskFull>(srcSlotValue)
+						<updateSrcSlotValue>
+					<!sameType>
+						<?multipleItemsPerSlotDst>for { let j := 0 } lt(j, <itemsPerSlot>) { j := add(j, 1) } </multipleItemsPerSlotDst>
+						{
+							let itemValue := <convert>(
+								<extractFromSlot>(srcSlotValue, mul(<srcStride>, srcItemIndexInSlot))
+							)
+							itemValue := <prepareStore>(itemValue)
+							dstSlotValue :=
+							<?multipleItemsPerSlotDst>
+								<updateByteSlice>(dstSlotValue, mul(<dstStride>, j), itemValue)
+							<!multipleItemsPerSlotDst>
+								itemValue
+							</multipleItemsPerSlotDst>
+
+							<updateSrcSlotValue>
+						}
+					</sameType>
+
+					sstore(add(dstSlot, i), dstSlotValue)
 				}
-				let spill := sub(length, mul(i, <itemsPerSlot>))
-				if gt(spill, 0) {
-					sstore(add(dstPtr, i), <maskBytes>(sload(add(srcPtr, i)), mul(spill, <bytesPerItem>)))
-				}
+
+				<?multipleItemsPerSlotDst>
+					let spill := sub(length, mul(fullSlots, <itemsPerSlot>))
+					if gt(spill, 0) {
+						let dstSlotValue := 0
+						<?sameType>
+							dstSlotValue := <maskBytes>(srcSlotValue, mul(spill, <srcStride>))
+							<updateSrcSlotValue>
+						<!sameType>
+							for { let j := 0 } lt(j, spill) { j := add(j, 1) } {
+								let itemValue := <convert>(
+									<extractFromSlot>(srcSlotValue, mul(<srcStride>, srcItemIndexInSlot))
+								)
+								itemValue := <prepareStore>(itemValue)
+								dstSlotValue := <updateByteSlice>(dstSlotValue, mul(<dstStride>, j), itemValue)
+
+								<updateSrcSlotValue>
+							}
+						</sameType>
+						sstore(add(dstSlot, fullSlots), dstSlotValue)
+					}
+				</multipleItemsPerSlotDst>
 			}
 		)");
 		if (_fromType.dataStoredIn(DataLocation::Storage))
@@ -1741,14 +2048,46 @@ string YulUtilFunctions::copyValueArrayStorageToStorageFunction(ArrayType const&
 		templ("functionName", functionName);
 		templ("resizeArray", resizeArrayFunction(_toType));
 		templ("arrayLength",arrayLengthFunction(_fromType));
-		templ("panic", panicFunction());
+		templ("panic", panicFunction(PanicCode::ResourceError));
 		templ("srcDataLocation", arrayDataAreaFunction(_fromType));
 		templ("dstDataLocation", arrayDataAreaFunction(_toType));
+		templ("srcStride", to_string(_fromType.storageStride()));
 		unsigned itemsPerSlot = 32 / _toType.storageStride();
 		templ("itemsPerSlot", to_string(itemsPerSlot));
-		templ("bytesPerItem", to_string(_toType.storageStride()));
-		templ("maskFull", maskLowerOrderBytesFunction(itemsPerSlot * _toType.storageStride()));
-		templ("maskBytes", maskLowerOrderBytesFunctionDynamic());
+		templ("multipleItemsPerSlotDst", itemsPerSlot > 1);
+		bool sameType = _fromType.baseType() == _toType.baseType();
+		templ("sameType", sameType);
+		if (sameType)
+		{
+			templ("maskFull", maskLowerOrderBytesFunction(itemsPerSlot * _toType.storageStride()));
+			templ("maskBytes", maskLowerOrderBytesFunctionDynamic());
+		}
+		else
+		{
+			templ("dstStride", to_string(_toType.storageStride()));
+			templ("extractFromSlot", extractFromStorageValueDynamic(*_fromType.baseType()));
+			templ("updateByteSlice", updateByteSliceFunctionDynamic(_toType.storageStride()));
+			templ("convert", conversionFunction(*_fromType.baseType(), *_toType.baseType()));
+			templ("prepareStore", prepareStoreFunction(*_toType.baseType()));
+		}
+		templ("updateSrcSlotValue", Whiskers(R"(
+			<?srcReadMultiPerSlot>
+				srcItemIndexInSlot := add(srcItemIndexInSlot, 1)
+				if eq(srcItemIndexInSlot, <srcItemsPerSlot>) {
+					// here we are done with this slot, we need to read next one
+					srcSlot := add(srcSlot, 1)
+					srcSlotValue := sload(srcSlot)
+					srcItemIndexInSlot := 0
+				}
+			<!srcReadMultiPerSlot>
+				srcSlot := add(srcSlot, 1)
+				srcSlotValue := sload(srcSlot)
+			</srcReadMultiPerSlot>
+			)")
+			("srcReadMultiPerSlot", !sameType && _fromType.storageStride() <= 16)
+			("srcItemsPerSlot", to_string(32 / _fromType.storageStride()))
+			.render()
+		);
 
 		return templ.render();
 	});
@@ -1818,8 +2157,7 @@ string YulUtilFunctions::arrayAllocationSizeFunction(ArrayType const& _type)
 				// Make sure we can allocate memory without overflow
 				if gt(length, 0xffffffffffffffff) { <panic>() }
 				<?byteArray>
-					// round up
-					size := and(add(length, 0x1f), not(0x1f))
+					size := <roundUp>(length)
 				<!byteArray>
 					size := mul(length, 0x20)
 				</byteArray>
@@ -1830,8 +2168,9 @@ string YulUtilFunctions::arrayAllocationSizeFunction(ArrayType const& _type)
 			}
 		)");
 		w("functionName", functionName);
-		w("panic", panicFunction());
+		w("panic", panicFunction(PanicCode::ResourceError));
 		w("byteArray", _type.isByteArray());
+		w("roundUp", roundUpFunction());
 		w("dynamic", _type.isDynamicallySized());
 		return w.render();
 	});
@@ -1879,13 +2218,12 @@ string YulUtilFunctions::storageArrayIndexAccessFunction(ArrayType const& _type)
 
 				<?multipleItemsPerSlot>
 					<?isBytesArray>
-						offset := sub(31, mod(index, 0x20))
 						switch lt(arrayLength, 0x20)
 						case 0 {
-							let dataArea := <dataAreaFunc>(array)
-							slot := add(dataArea, div(index, 0x20))
+							slot, offset := <indexAccessNoChecks>(array, index)
 						}
 						default {
+							offset := sub(31, mod(index, 0x20))
 							slot := array
 						}
 					<!isBytesArray>
@@ -1901,9 +2239,10 @@ string YulUtilFunctions::storageArrayIndexAccessFunction(ArrayType const& _type)
 			}
 		)")
 		("functionName", functionName)
-		("panic", panicFunction())
+		("panic", panicFunction(PanicCode::ArrayOutOfBounds))
 		("arrayLen", arrayLengthFunction(_type))
 		("dataAreaFunc", arrayDataAreaFunction(_type))
+		("indexAccessNoChecks", longByteArrayStorageIndexAccessNoCheckFunction())
 		("multipleItemsPerSlot", _type.baseType()->storageBytes() <= 16)
 		("isBytesArray", _type.isByteArray())
 		("storageSize", _type.baseType()->storageSize().str())
@@ -1931,7 +2270,7 @@ string YulUtilFunctions::memoryArrayIndexAccessFunction(ArrayType const& _type)
 			}
 		)")
 		("functionName", functionName)
-		("panic", panicFunction())
+		("panic", panicFunction(PanicCode::ArrayOutOfBounds))
 		("arrayLen", arrayLengthFunction(_type))
 		("stride", to_string(_type.memoryStride()))
 		("dynamicallySized", _type.isDynamicallySized())
@@ -1954,7 +2293,7 @@ string YulUtilFunctions::calldataArrayIndexAccessFunction(ArrayType const& _type
 			}
 		)")
 		("functionName", functionName)
-		("panic", panicFunction())
+		("panic", panicFunction(PanicCode::ArrayOutOfBounds))
 		("stride", to_string(_type.calldataStride()))
 		("dynamicallySized", _type.isDynamicallySized())
 		("dynamicallyEncodedBase", _type.baseType()->isDynamicallyEncoded())
@@ -1973,16 +2312,16 @@ string YulUtilFunctions::calldataArrayIndexRangeAccess(ArrayType const& _type)
 	return m_functionCollector.createFunction(functionName, [&]() {
 		return Whiskers(R"(
 			function <functionName>(offset, length, startIndex, endIndex) -> offsetOut, lengthOut {
-				if gt(startIndex, endIndex) { <revertSliceStartAfterEnd> }
-				if gt(endIndex, length) { <revertSliceGreaterThanLength> }
+				if gt(startIndex, endIndex) { <revertSliceStartAfterEnd>() }
+				if gt(endIndex, length) { <revertSliceGreaterThanLength>() }
 				offsetOut := add(offset, mul(startIndex, <stride>))
 				lengthOut := sub(endIndex, startIndex)
 			}
 		)")
 		("functionName", functionName)
 		("stride", to_string(_type.calldataStride()))
-		("revertSliceStartAfterEnd", revertReasonIfDebug("Slice starts after end"))
-		("revertSliceGreaterThanLength", revertReasonIfDebug("Slice is greater than length"))
+		("revertSliceStartAfterEnd", revertReasonIfDebugFunction("Slice starts after end"))
+		("revertSliceGreaterThanLength", revertReasonIfDebugFunction("Slice is greater than length"))
 		.render();
 	});
 }
@@ -1996,13 +2335,13 @@ string YulUtilFunctions::accessCalldataTailFunction(Type const& _type)
 		return Whiskers(R"(
 			function <functionName>(base_ref, ptr_to_tail) -> addr<?dynamicallySized>, length</dynamicallySized> {
 				let rel_offset_of_tail := calldataload(ptr_to_tail)
-				if iszero(slt(rel_offset_of_tail, sub(sub(calldatasize(), base_ref), sub(<neededLength>, 1)))) { <invalidCalldataTailOffset> }
+				if iszero(slt(rel_offset_of_tail, sub(sub(calldatasize(), base_ref), sub(<neededLength>, 1)))) { <invalidCalldataTailOffset>() }
 				addr := add(base_ref, rel_offset_of_tail)
 				<?dynamicallySized>
 					length := calldataload(addr)
-					if gt(length, 0xffffffffffffffff) { <invalidCalldataTailLength> }
+					if gt(length, 0xffffffffffffffff) { <invalidCalldataTailLength>() }
 					addr := add(addr, 32)
-					if sgt(addr, sub(calldatasize(), mul(length, <calldataStride>))) { <shortCalldataTail> }
+					if sgt(addr, sub(calldatasize(), mul(length, <calldataStride>))) { <shortCalldataTail>() }
 				</dynamicallySized>
 			}
 		)")
@@ -2010,9 +2349,9 @@ string YulUtilFunctions::accessCalldataTailFunction(Type const& _type)
 		("dynamicallySized", _type.isDynamicallySized())
 		("neededLength", toCompactHexWithPrefix(_type.calldataEncodedTailSize()))
 		("calldataStride", toCompactHexWithPrefix(_type.isDynamicallySized() ? dynamic_cast<ArrayType const&>(_type).calldataStride() : 0))
-		("invalidCalldataTailOffset", revertReasonIfDebug("Invalid calldata tail offset"))
-		("invalidCalldataTailLength", revertReasonIfDebug("Invalid calldata tail length"))
-		("shortCalldataTail", revertReasonIfDebug("Calldata tail too short"))
+		("invalidCalldataTailOffset", revertReasonIfDebugFunction("Invalid calldata tail offset"))
+		("invalidCalldataTailLength", revertReasonIfDebugFunction("Invalid calldata tail length"))
+		("shortCalldataTail", revertReasonIfDebugFunction("Calldata tail too short"))
 		.render();
 	});
 }
@@ -2070,19 +2409,19 @@ string YulUtilFunctions::copyArrayFromStorageToMemoryFunction(ArrayType const& _
 			solAssert(_from.baseType() == _to.baseType(), "");
 			ABIFunctions abi(m_evmVersion, m_revertStrings, m_functionCollector);
 			return Whiskers(R"(
-				function <functionName>(slot) -> memptr {
-					memptr := <allocateTemp>()
-					let end := <encode>(slot, memptr)
-					mstore(<freeMemoryPointer>, end)
+				function <functionName>(slot) -> memPtr {
+					memPtr := <allocateUnbounded>()
+					let end := <encode>(slot, memPtr)
+					<finalizeAllocation>(memPtr, sub(end, memPtr))
 				}
 			)")
 			("functionName", functionName)
-			("allocateTemp", allocationTemporaryMemoryFunction())
+			("allocateUnbounded", allocateUnboundedFunction())
 			(
 				"encode",
 				abi.abiEncodeAndReturnUpdatedPosFunction(_from, _to, ABIFunctions::EncodingOptions{})
 			)
-			("freeMemoryPointer", to_string(CompilerUtils::freeMemoryPointer))
+			("finalizeAllocation", finalizeAllocationFunction())
 			.render();
 		}
 		else
@@ -2093,10 +2432,10 @@ string YulUtilFunctions::copyArrayFromStorageToMemoryFunction(ArrayType const& _
 			solAssert(!_from.isByteArray(), "");
 			solAssert(*_to.withLocation(DataLocation::Storage, _from.isPointer()) == _from, "");
 			return Whiskers(R"(
-				function <functionName>(slot) -> memptr {
+				function <functionName>(slot) -> memPtr {
 					let length := <lengthFunction>(slot)
-					memptr := <allocateArray>(length)
-					let mpos := memptr
+					memPtr := <allocateArray>(length)
+					let mpos := memPtr
 					<?dynamic>mpos := add(mpos, 0x20)</dynamic>
 					let spos := <arrayDataArea>(slot)
 					for { let i := 0 } lt(i, length) { i := add(i, 1) } {
@@ -2118,10 +2457,63 @@ string YulUtilFunctions::copyArrayFromStorageToMemoryFunction(ArrayType const& _
 	});
 }
 
+string YulUtilFunctions::bytesConcatFunction(vector<Type const*> const& _argumentTypes)
+{
+	string functionName = "bytes_concat";
+	size_t totalParams = 0;
+	vector<Type const*> targetTypes;
+	for (Type const* argumentType: _argumentTypes)
+	{
+		solAssert(
+			argumentType->isImplicitlyConvertibleTo(*TypeProvider::bytesMemory()) ||
+			argumentType->isImplicitlyConvertibleTo(*TypeProvider::fixedBytes(32)),
+			""
+		);
+		if (argumentType->category() == Type::Category::FixedBytes)
+			targetTypes.emplace_back(argumentType);
+		else if (
+			auto const* literalType = dynamic_cast<StringLiteralType const*>(argumentType);
+			literalType && !literalType->value().empty() && literalType->value().size() <= 32
+		)
+			targetTypes.emplace_back(TypeProvider::fixedBytes(static_cast<unsigned>(literalType->value().size())));
+		else
+		{
+			solAssert(!dynamic_cast<RationalNumberType const*>(argumentType), "");
+			solAssert(argumentType->isImplicitlyConvertibleTo(*TypeProvider::bytesMemory()), "");
+			targetTypes.emplace_back(TypeProvider::bytesMemory());
+		}
+
+		totalParams += argumentType->sizeOnStack();
+		functionName += "_" + argumentType->identifier();
+	}
+
+	return m_functionCollector.createFunction(functionName, [&]() {
+		Whiskers templ(R"(
+			function <functionName>(<parameters>) -> outPtr {
+				outPtr := <allocateUnbounded>()
+				let dataStart := add(outPtr, 0x20)
+				let dataEnd := <encodePacked>(dataStart<?+parameters>, <parameters></+parameters>)
+				mstore(outPtr, sub(dataEnd, dataStart))
+				<finalizeAllocation>(outPtr, sub(dataEnd, outPtr))
+			}
+		)");
+		templ("functionName", functionName);
+		templ("parameters", suffixedVariableNameList("param_", 0, totalParams));
+		templ("allocateUnbounded", allocateUnboundedFunction());
+		templ("finalizeAllocation", finalizeAllocationFunction());
+		templ(
+			"encodePacked",
+			ABIFunctions{m_evmVersion, m_revertStrings, m_functionCollector}.tupleEncoderPacked(
+				_argumentTypes,
+				targetTypes
+			)
+		);
+		return templ.render();
+	});
+}
+
 string YulUtilFunctions::mappingIndexAccessFunction(MappingType const& _mappingType, Type const& _keyType)
 {
-	solAssert(_keyType.sizeOnStack() <= 1, "");
-
 	string functionName = "mapping_index_access_" + _mappingType.identifier() + "_of_" + _keyType.identifier();
 	return m_functionCollector.createFunction(functionName, [&]() {
 		if (_mappingType.keyType()->isDynamicallySized())
@@ -2131,7 +2523,7 @@ string YulUtilFunctions::mappingIndexAccessFunction(MappingType const& _mappingT
 				}
 			)")
 			("functionName", functionName)
-			("key", _keyType.sizeOnStack() > 0 ? "key" : "")
+			("key", suffixedVariableNameList("key_", 0, _keyType.sizeOnStack()))
 			("hash", packedHashFunction(
 				{&_keyType, TypeProvider::uint256()},
 				{_mappingType.keyType(), TypeProvider::uint256()}
@@ -2173,8 +2565,25 @@ string YulUtilFunctions::readFromStorage(Type const& _type, size_t _offset, bool
 
 string YulUtilFunctions::readFromStorageDynamic(Type const& _type, bool _splitFunctionTypes)
 {
-	solAssert(_type.isValueType(), "");
-	return readFromStorageValueType(_type, {}, _splitFunctionTypes);
+	if (_type.isValueType())
+		return readFromStorageValueType(_type, {}, _splitFunctionTypes);
+	string functionName =
+		"read_from_storage__dynamic_" +
+		string(_splitFunctionTypes ? "split_" : "") +
+		_type.identifier();
+
+	return m_functionCollector.createFunction(functionName, [&] {
+		return Whiskers(R"(
+			function <functionName>(slot, offset) -> value {
+				if gt(offset, 0) { <panic>() }
+				value := <readFromStorage>(slot)
+			}
+		)")
+		("functionName", functionName)
+		("panic", panicFunction(util::PanicCode::Generic))
+		("readFromStorage", readFromStorageReferenceType(_type))
+		.render();
+	});
 }
 
 string YulUtilFunctions::readFromStorageValueType(Type const& _type, optional<size_t> _offset, bool _splitFunctionTypes)
@@ -2217,7 +2626,15 @@ string YulUtilFunctions::readFromStorageValueType(Type const& _type, optional<si
 
 string YulUtilFunctions::readFromStorageReferenceType(Type const& _type)
 {
-	solUnimplementedAssert(_type.category() == Type::Category::Struct, "");
+	if (auto const* arrayType = dynamic_cast<ArrayType const*>(&_type))
+	{
+		solAssert(arrayType->dataStoredIn(DataLocation::Memory), "");
+		return copyArrayFromStorageToMemoryFunction(
+			dynamic_cast<ArrayType const&>(*arrayType->copyForLocation(DataLocation::Storage, false)),
+			*arrayType
+		);
+	}
+	solAssert(_type.category() == Type::Category::Struct, "");
 
 	string functionName = "read_from_storage_reference_type_" + _type.identifier();
 
@@ -2228,24 +2645,19 @@ string YulUtilFunctions::readFromStorageReferenceType(Type const& _type)
 	for (size_t i = 0; i < structMembers.size(); ++i)
 	{
 		auto const& [memberSlotDiff, memberStorageOffset] = structType.storageOffsetsOfMember(structMembers[i].name);
+		solAssert(structMembers[i].type->isValueType() || memberStorageOffset == 0, "");
 
 		memberSetValues[i]["setMember"] = Whiskers(R"(
 			{
-				let <memberValues> := <readFromStorage>(add(slot, <memberSlotDiff>)<?hasOffset>, <memberStorageOffset></hasOffset>)
+				let <memberValues> := <readFromStorage>(add(slot, <memberSlotDiff>))
 				<writeToMemory>(add(value, <memberMemoryOffset>), <memberValues>)
 			}
 		)")
 		("memberValues", suffixedVariableNameList("memberValue_", 0, structMembers[i].type->stackItems().size()))
 		("memberMemoryOffset", structType.memoryOffsetOfMember(structMembers[i].name).str())
 		("memberSlotDiff",  memberSlotDiff.str())
-		("memberStorageOffset", to_string(memberStorageOffset))
-		("readFromStorage",
-			structMembers[i].type->isValueType() ?
-				readFromStorageDynamic(*structMembers[i].type, true) :
-				readFromStorage(*structMembers[i].type, memberStorageOffset, true)
-		)
+		("readFromStorage", readFromStorage(*structMembers[i].type, memberStorageOffset, true))
 		("writeToMemory", writeToMemoryFunction(*structMembers[i].type))
-		("hasOffset", structMembers[i].type->isValueType())
 		.render();
 	}
 
@@ -2318,147 +2730,72 @@ string YulUtilFunctions::updateStorageValueFunction(
 
 		auto const* toReferenceType = dynamic_cast<ReferenceType const*>(&_toType);
 		auto const* fromReferenceType = dynamic_cast<ReferenceType const*>(&_fromType);
-		solAssert(fromReferenceType && toReferenceType, "");
+		solAssert(toReferenceType, "");
+
+		if (!fromReferenceType)
+		{
+			solAssert(_fromType.category() == Type::Category::StringLiteral, "");
+			solAssert(toReferenceType->category() == Type::Category::Array, "");
+			auto const& toArrayType = dynamic_cast<ArrayType const&>(*toReferenceType);
+			solAssert(toArrayType.isByteArray(), "");
+
+			return Whiskers(R"(
+				function <functionName>(slot<?dynamicOffset>, offset</dynamicOffset>) {
+					<?dynamicOffset>if offset { <panic>() }</dynamicOffset>
+					<copyToStorage>(slot)
+				}
+			)")
+			("functionName", functionName)
+			("dynamicOffset", !_offset.has_value())
+			("panic", panicFunction(PanicCode::Generic))
+			("copyToStorage", copyLiteralToStorageFunction(dynamic_cast<StringLiteralType const&>(_fromType).value()))
+			.render();
+		}
+
 		solAssert(*toReferenceType->copyForLocation(
 			fromReferenceType->location(),
 			fromReferenceType->isPointer()
 		).get() == *fromReferenceType, "");
-		solAssert(toReferenceType->category() == fromReferenceType->category(), "");
 
-		if (_toType.category() == Type::Category::Array)
-		{
-			solAssert(_offset.value_or(0) == 0, "");
+		if (fromReferenceType->category() == Type::Category::ArraySlice)
+			solAssert(toReferenceType->category() == Type::Category::Array, "");
+		else
+			solAssert(toReferenceType->category() == fromReferenceType->category(), "");
+		solAssert(_offset.value_or(0) == 0, "");
 
-			Whiskers templ(R"(
-				function <functionName>(slot, <?dynamicOffset>offset, </dynamicOffset><value>) {
-					<?dynamicOffset>if offset { <panic>() }</dynamicOffset>
-					<copyArrayToStorage>(slot, <value>)
-				}
-			)");
-			templ("functionName", functionName);
-			templ("dynamicOffset", !_offset.has_value());
-			templ("panic", panicFunction());
-			templ("value", suffixedVariableNameList("value_", 0, _fromType.sizeOnStack()));
-			templ("copyArrayToStorage", copyArrayToStorageFunction(
+		Whiskers templ(R"(
+			function <functionName>(slot, <?dynamicOffset>offset, </dynamicOffset><value>) {
+				<?dynamicOffset>if offset { <panic>() }</dynamicOffset>
+				<copyToStorage>(slot, <value>)
+			}
+		)");
+		templ("functionName", functionName);
+		templ("dynamicOffset", !_offset.has_value());
+		templ("panic", panicFunction(PanicCode::Generic));
+		templ("value", suffixedVariableNameList("value_", 0, _fromType.sizeOnStack()));
+		if (_fromType.category() == Type::Category::Array)
+			templ("copyToStorage", copyArrayToStorageFunction(
 				dynamic_cast<ArrayType const&>(_fromType),
 				dynamic_cast<ArrayType const&>(_toType)
 			));
-
-			return templ.render();
+		else if (_fromType.category() == Type::Category::ArraySlice)
+		{
+			solAssert(
+				_fromType.dataStoredIn(DataLocation::CallData),
+				"Currently only calldata array slices are supported!"
+			);
+			templ("copyToStorage", copyArrayToStorageFunction(
+				dynamic_cast<ArraySliceType const&>(_fromType).arrayType(),
+				dynamic_cast<ArrayType const&>(_toType)
+			));
 		}
 		else
-		{
-			solAssert(_toType.category() == Type::Category::Struct, "");
+			templ("copyToStorage", copyStructToStorageFunction(
+				dynamic_cast<StructType const&>(_fromType),
+				dynamic_cast<StructType const&>(_toType)
+			));
 
-			auto const& fromStructType = dynamic_cast<StructType const&>(_fromType);
-			auto const& toStructType = dynamic_cast<StructType const&>(_toType);
-			solAssert(fromStructType.structDefinition() == toStructType.structDefinition(), "");
-			solAssert(_offset.value_or(0) == 0, "");
-
-			Whiskers templ(R"(
-				function <functionName>(slot, <?dynamicOffset>offset, </dynamicOffset>value) {
-					<?dynamicOffset>if offset { <panic>() }</dynamicOffset>
-					<?fromStorage> if eq(slot, value) { leave } </fromStorage>
-					<#member>
-					{
-						<updateMemberCall>
-					}
-					</member>
-				}
-			)");
-			templ("functionName", functionName);
-			templ("dynamicOffset", !_offset.has_value());
-			templ("panic", panicFunction());
-			templ("fromStorage", fromStructType.dataStoredIn(DataLocation::Storage));
-
-			MemberList::MemberMap structMembers = fromStructType.nativeMembers(nullptr);
-			MemberList::MemberMap toStructMembers = toStructType.nativeMembers(nullptr);
-
-			vector<map<string, string>> memberParams(structMembers.size());
-			for (size_t i = 0; i < structMembers.size(); ++i)
-			{
-				Type const& memberType = *structMembers[i].type;
-				solAssert(memberType.memoryHeadSize() == 32, "");
-				auto const& [slotDiff, offset] = toStructType.storageOffsetsOfMember(structMembers[i].name);
-
-				Whiskers t(R"(
-					let memberSlot := add(slot, <memberStorageSlotDiff>)
-					let memberSrcPtr := add(value, <memberOffset>)
-
-					<?fromCalldata>
-						let <memberValues> :=
-							<?dynamicallyEncodedMember>
-								<accessCalldataTail>(value, memberSrcPtr)
-							<!dynamicallyEncodedMember>
-								memberSrcPtr
-							</dynamicallyEncodedMember>
-
-						<?isValueType>
-							<memberValues> := <read>(<memberValues>)
-						</isValueType>
-					</fromCalldata>
-
-					<?fromMemory>
-						let <memberValues> := <read>(memberSrcPtr)
-					</fromMemory>
-
-					<?fromStorage>
-						let <memberValues> :=
-							<?isValueType>
-								<read>(memberSrcPtr)
-							<!isValueType>
-								memberSrcPtr
-							</isValueType>
-					</fromStorage>
-
-					<updateStorageValue>(memberSlot, <memberValues>)
-				)");
-				bool fromCalldata = fromStructType.location() == DataLocation::CallData;
-				t("fromCalldata", fromCalldata);
-				bool fromMemory = fromStructType.location() == DataLocation::Memory;
-				t("fromMemory", fromMemory);
-				bool fromStorage = fromStructType.location() == DataLocation::Storage;
-				t("fromStorage", fromStorage);
-				t("isValueType", memberType.isValueType());
-				t("memberValues", suffixedVariableNameList("memberValue_", 0, memberType.stackItems().size()));
-
-				t("memberStorageSlotDiff", slotDiff.str());
-				if (fromCalldata)
-				{
-					t("memberOffset", to_string(fromStructType.calldataOffsetOfMember(structMembers[i].name)));
-					t("dynamicallyEncodedMember", memberType.isDynamicallyEncoded());
-					if (memberType.isDynamicallyEncoded())
-						t("accessCalldataTail", accessCalldataTailFunction(memberType));
-					if (memberType.isValueType())
-						t("read", readFromCalldata(memberType));
-				}
-				else if (fromMemory)
-				{
-					t("memberOffset", fromStructType.memoryOffsetOfMember(structMembers[i].name).str());
-					t("read", readFromMemory(memberType));
-				}
-				else if (fromStorage)
-				{
-					auto [srcSlotOffset, srcOffset] = fromStructType.storageOffsetsOfMember(structMembers[i].name);
-					t("memberOffset", formatNumber(srcSlotOffset));
-					if (memberType.isValueType())
-						t("read", readFromStorageValueType(memberType, srcOffset, false));
-					else
-						solAssert(srcOffset == 0, "");
-
-				}
-				t("memberStorageSlotOffset", to_string(offset));
-				t("updateStorageValue", updateStorageValueFunction(
-					memberType,
-					*toStructMembers[i].type,
-					optional<unsigned>{offset}
-				));
-				memberParams[i]["updateMemberCall"] = t.render();
-			}
-			templ("member", memberParams);
-
-			return templ.render();
-		}
+		return templ.render();
 	});
 }
 
@@ -2629,27 +2966,24 @@ string YulUtilFunctions::prepareStoreFunction(Type const& _type)
 
 string YulUtilFunctions::allocationFunction()
 {
-	string functionName = "allocateMemory";
+	string functionName = "allocate_memory";
 	return m_functionCollector.createFunction(functionName, [&]() {
 		return Whiskers(R"(
 			function <functionName>(size) -> memPtr {
-				memPtr := mload(<freeMemoryPointer>)
-				let newFreePtr := add(memPtr, size)
-				// protect against overflow
-				if or(gt(newFreePtr, 0xffffffffffffffff), lt(newFreePtr, memPtr)) { <panic>() }
-				mstore(<freeMemoryPointer>, newFreePtr)
+				memPtr := <allocateUnbounded>()
+				<finalizeAllocation>(memPtr, size)
 			}
 		)")
 		("functionName", functionName)
-		("freeMemoryPointer", to_string(CompilerUtils::freeMemoryPointer))
-		("panic", panicFunction())
+		("allocateUnbounded", allocateUnboundedFunction())
+		("finalizeAllocation", finalizeAllocationFunction())
 		.render();
 	});
 }
 
-string YulUtilFunctions::allocationTemporaryMemoryFunction()
+string YulUtilFunctions::allocateUnboundedFunction()
 {
-	string functionName = "allocateTemporaryMemory";
+	string functionName = "allocate_unbounded";
 	return m_functionCollector.createFunction(functionName, [&]() {
 		return Whiskers(R"(
 			function <functionName>() -> memPtr {
@@ -2662,15 +2996,22 @@ string YulUtilFunctions::allocationTemporaryMemoryFunction()
 	});
 }
 
-string YulUtilFunctions::releaseTemporaryMemoryFunction()
+string YulUtilFunctions::finalizeAllocationFunction()
 {
-	string functionName = "releaseTemporaryMemory";
-	return m_functionCollector.createFunction(functionName, [&](){
+	string functionName = "finalize_allocation";
+	return m_functionCollector.createFunction(functionName, [&]() {
 		return Whiskers(R"(
-			function <functionName>() {
+			function <functionName>(memPtr, size) {
+				let newFreePtr := add(memPtr, <roundUp>(size))
+				// protect against overflow
+				if or(gt(newFreePtr, 0xffffffffffffffff), lt(newFreePtr, memPtr)) { <panic>() }
+				mstore(<freeMemoryPointer>, newFreePtr)
 			}
 		)")
 		("functionName", functionName)
+		("freeMemoryPointer", to_string(CompilerUtils::freeMemoryPointer))
+		("roundUp", roundUpFunction())
+		("panic", panicFunction(PanicCode::ResourceError))
 		.render();
 	});
 }
@@ -2848,8 +3189,13 @@ string YulUtilFunctions::conversionFunction(Type const& _from, Type const& _to)
 	}
 	else if (_from.category() == Type::Category::ArraySlice)
 	{
-		solAssert(_to.category() == Type::Category::Array, "");
 		auto const& fromType = dynamic_cast<ArraySliceType const&>(_from);
+		if (_to.category() == Type::Category::FixedBytes)
+		{
+			solAssert(fromType.arrayType().isByteArray(), "Array types other than bytes not convertible to bytesNN.");
+			return bytesToFixedBytesConversionFunction(fromType.arrayType(), dynamic_cast<FixedBytesType const &>(_to));
+		}
+		solAssert(_to.category() == Type::Category::Array, "");
 		auto const& targetType = dynamic_cast<ArrayType const&>(_to);
 
 		solAssert(fromType.arrayType().isImplicitlyConvertibleTo(targetType), "");
@@ -2881,11 +3227,14 @@ string YulUtilFunctions::conversionFunction(Type const& _from, Type const& _to)
 	}
 	else if (_from.category() == Type::Category::Array)
 	{
+		auto const& fromArrayType =  dynamic_cast<ArrayType const&>(_from);
+		if (_to.category() == Type::Category::FixedBytes)
+		{
+			solAssert(fromArrayType.isByteArray(), "Array types other than bytes not convertible to bytesNN.");
+			return bytesToFixedBytesConversionFunction(fromArrayType, dynamic_cast<FixedBytesType const &>(_to));
+		}
 		solAssert(_to.category() == Type::Category::Array, "");
-		return arrayConversionFunction(
-			dynamic_cast<ArrayType const&>(_from),
-			dynamic_cast<ArrayType const&>(_to)
-		);
+		return arrayConversionFunction(fromArrayType, dynamic_cast<ArrayType const&>(_to));
 	}
 
 	if (_from.sizeOnStack() != 1 || _to.sizeOnStack() != 1)
@@ -3106,9 +3455,184 @@ string YulUtilFunctions::conversionFunction(Type const& _from, Type const& _to)
 	});
 }
 
+string YulUtilFunctions::bytesToFixedBytesConversionFunction(ArrayType const& _from, FixedBytesType const& _to)
+{
+	solAssert(_from.isByteArray() && !_from.isString(), "");
+	solAssert(_from.isDynamicallySized(), "");
+	string functionName = "convert_bytes_to_fixedbytes_from_" + _from.identifier() + "_to_" + _to.identifier();
+	return m_functionCollector.createFunction(functionName, [&](auto& _args, auto& _returnParams) {
+		_args = { "array" };
+		bool fromCalldata = _from.dataStoredIn(DataLocation::CallData);
+		if (fromCalldata)
+			_args.emplace_back("len");
+		_returnParams = {"value"};
+		Whiskers templ(R"(
+			let length := <arrayLen>(array<?fromCalldata>, len</fromCalldata>)
+			let dataArea := array
+			<?fromMemory>
+				dataArea := <dataArea>(array)
+			</fromMemory>
+			<?fromStorage>
+				if gt(length, 31) { dataArea := <dataArea>(array) }
+			</fromStorage>
+
+			<?fromCalldata>
+				value := <cleanup>(calldataload(dataArea))
+			<!fromCalldata>
+				value := <extractValue>(dataArea)
+			</fromCalldata>
+
+			if lt(length, <fixedBytesLen>) {
+				value := and(
+					value,
+					<shl>(
+						mul(8, sub(<fixedBytesLen>, length)),
+						<mask>
+					)
+				)
+			}
+		)");
+		templ("fromCalldata", fromCalldata);
+		templ("arrayLen", arrayLengthFunction(_from));
+		templ("fixedBytesLen", to_string(_to.numBytes()));
+		templ("fromMemory", _from.dataStoredIn(DataLocation::Memory));
+		templ("fromStorage", _from.dataStoredIn(DataLocation::Storage));
+		templ("dataArea", arrayDataAreaFunction(_from));
+		if (fromCalldata)
+			templ("cleanup", cleanupFunction(_to));
+		else
+			templ(
+				"extractValue",
+				_from.dataStoredIn(DataLocation::Storage) ?
+				readFromStorage(_to, 32 - _to.numBytes(), false) :
+				readFromMemory(_to)
+			);
+		templ("shl", shiftLeftFunctionDynamic());
+		templ("mask", formatNumber(~((u256(1) << (256 - _to.numBytes() * 8)) - 1)));
+		return templ.render();
+	});
+}
+
+string YulUtilFunctions::copyStructToStorageFunction(StructType const& _from, StructType const& _to)
+{
+	solAssert(_to.dataStoredIn(DataLocation::Storage), "");
+	solAssert(_from.structDefinition() == _to.structDefinition(), "");
+
+	string functionName =
+		"copy_struct_to_storage_from_" +
+		_from.identifier() +
+		"_to_" +
+		_to.identifier();
+
+	return m_functionCollector.createFunction(functionName, [&](auto& _arguments, auto&) {
+		_arguments = {"slot", "value"};
+		Whiskers templ(R"(
+			<?fromStorage> if iszero(eq(slot, value)) { </fromStorage>
+			<#member>
+			{
+				<updateMemberCall>
+			}
+			</member>
+			<?fromStorage> } </fromStorage>
+		)");
+		templ("fromStorage", _from.dataStoredIn(DataLocation::Storage));
+
+		MemberList::MemberMap structMembers = _from.nativeMembers(nullptr);
+		MemberList::MemberMap toStructMembers = _to.nativeMembers(nullptr);
+
+		vector<map<string, string>> memberParams(structMembers.size());
+		for (size_t i = 0; i < structMembers.size(); ++i)
+		{
+			Type const& memberType = *structMembers[i].type;
+			solAssert(memberType.memoryHeadSize() == 32, "");
+			auto const&[slotDiff, offset] = _to.storageOffsetsOfMember(structMembers[i].name);
+
+			Whiskers t(R"(
+				let memberSlot := add(slot, <memberStorageSlotDiff>)
+				let memberSrcPtr := add(value, <memberOffset>)
+
+				<?fromCalldata>
+					let <memberValues> :=
+						<?dynamicallyEncodedMember>
+							<accessCalldataTail>(value, memberSrcPtr)
+						<!dynamicallyEncodedMember>
+							memberSrcPtr
+						</dynamicallyEncodedMember>
+
+					<?isValueType>
+						<memberValues> := <read>(<memberValues>)
+					</isValueType>
+				</fromCalldata>
+
+				<?fromMemory>
+					let <memberValues> := <read>(memberSrcPtr)
+				</fromMemory>
+
+				<?fromStorage>
+					let <memberValues> :=
+						<?isValueType>
+							<read>(memberSrcPtr)
+						<!isValueType>
+							memberSrcPtr
+						</isValueType>
+				</fromStorage>
+
+				<updateStorageValue>(memberSlot, <memberValues>)
+			)");
+			bool fromCalldata = _from.location() == DataLocation::CallData;
+			t("fromCalldata", fromCalldata);
+			bool fromMemory = _from.location() == DataLocation::Memory;
+			t("fromMemory", fromMemory);
+			bool fromStorage = _from.location() == DataLocation::Storage;
+			t("fromStorage", fromStorage);
+			t("isValueType", memberType.isValueType());
+			t("memberValues", suffixedVariableNameList("memberValue_", 0, memberType.stackItems().size()));
+
+			t("memberStorageSlotDiff", slotDiff.str());
+			if (fromCalldata)
+			{
+				t("memberOffset", to_string(_from.calldataOffsetOfMember(structMembers[i].name)));
+				t("dynamicallyEncodedMember", memberType.isDynamicallyEncoded());
+				if (memberType.isDynamicallyEncoded())
+					t("accessCalldataTail", accessCalldataTailFunction(memberType));
+				if (memberType.isValueType())
+					t("read", readFromCalldata(memberType));
+			}
+			else if (fromMemory)
+			{
+				t("memberOffset", _from.memoryOffsetOfMember(structMembers[i].name).str());
+				t("read", readFromMemory(memberType));
+			}
+			else if (fromStorage)
+			{
+				auto const& [srcSlotOffset, srcOffset] = _from.storageOffsetsOfMember(structMembers[i].name);
+				t("memberOffset", formatNumber(srcSlotOffset));
+				if (memberType.isValueType())
+					t("read", readFromStorageValueType(memberType, srcOffset, false));
+				else
+					solAssert(srcOffset == 0, "");
+
+			}
+			t("updateStorageValue", updateStorageValueFunction(
+				memberType,
+				*toStructMembers[i].type,
+				optional<unsigned>{offset}
+			));
+			memberParams[i]["updateMemberCall"] = t.render();
+		}
+		templ("member", memberParams);
+
+		return templ.render();
+	});
+}
+
 string YulUtilFunctions::arrayConversionFunction(ArrayType const& _from, ArrayType const& _to)
 {
-	solAssert(_to.location() != DataLocation::CallData, "");
+	if (_to.dataStoredIn(DataLocation::CallData))
+		solAssert(
+			_from.dataStoredIn(DataLocation::CallData) && _from.isByteArray() && _to.isByteArray(),
+			""
+		);
 
 	// Other cases are done explicitly in LValue::storeValue, and only possible by assignment.
 	if (_to.location() == DataLocation::Storage)
@@ -3126,16 +3650,22 @@ string YulUtilFunctions::arrayConversionFunction(ArrayType const& _from, ArrayTy
 
 	return m_functionCollector.createFunction(functionName, [&]() {
 		Whiskers templ(R"(
-			function <functionName>(value<?fromCalldataDynamic>, length</fromCalldataDynamic>) -> converted {
+			function <functionName>(value<?fromCalldataDynamic>, length</fromCalldataDynamic>) -> converted <?toCalldataDynamic>, outLength</toCalldataDynamic> {
 				<body>
+				<?toCalldataDynamic>
+					outLength := <length>
+				</toCalldataDynamic>
 			}
 		)");
 		templ("functionName", functionName);
 		templ("fromCalldataDynamic", _from.dataStoredIn(DataLocation::CallData) && _from.isDynamicallySized());
+		templ("toCalldataDynamic", _to.dataStoredIn(DataLocation::CallData) && _to.isDynamicallySized());
+		templ("length", _from.isDynamicallySized() ? "length" : _from.length().str());
 
 		if (
 			_from == _to ||
 			(_from.dataStoredIn(DataLocation::Memory) && _to.dataStoredIn(DataLocation::Memory)) ||
+			(_from.dataStoredIn(DataLocation::CallData) && _to.dataStoredIn(DataLocation::CallData)) ||
 			_to.dataStoredIn(DataLocation::Storage)
 		)
 			templ("body", "converted := value");
@@ -3285,10 +3815,7 @@ string YulUtilFunctions::validatorFunction(Type const& _type, bool _revertOnFail
 			}
 		)");
 		templ("functionName", functionName);
-		if (_revertOnFailure)
-			templ("failure", "revert(0, 0)");
-		else
-			templ("failure", panicFunction() + "()");
+		PanicCode panicCode = PanicCode::Generic;
 
 		switch (_type.category())
 		{
@@ -3311,6 +3838,7 @@ string YulUtilFunctions::validatorFunction(Type const& _type, bool _revertOnFail
 		{
 			size_t members = dynamic_cast<EnumType const&>(_type).numberOfMembers();
 			solAssert(members > 0, "empty enum should have caused a parser error.");
+			panicCode = PanicCode::EnumConversionError;
 			templ("condition", "lt(value, " + to_string(members) + ")");
 			break;
 		}
@@ -3320,6 +3848,11 @@ string YulUtilFunctions::validatorFunction(Type const& _type, bool _revertOnFail
 		default:
 			solAssert(false, "Validation of type " + _type.identifier() + " requested.");
 		}
+
+		if (_revertOnFailure)
+			templ("failure", "revert(0, 0)");
+		else
+			templ("failure", panicFunction(panicCode) + "()");
 
 		return templ.render();
 	});
@@ -3342,7 +3875,7 @@ string YulUtilFunctions::packedHashFunction(
 	return m_functionCollector.createFunction(functionName, [&]() {
 		Whiskers templ(R"(
 			function <functionName>(<variables>) -> hash {
-				let pos := mload(<freeMemoryPointer>)
+				let pos := <allocateUnbounded>()
 				let end := <packedEncode>(pos <comma> <variables>)
 				hash := keccak256(pos, sub(end, pos))
 			}
@@ -3350,7 +3883,7 @@ string YulUtilFunctions::packedHashFunction(
 		templ("functionName", functionName);
 		templ("variables", suffixedVariableNameList("var_", 1, 1 + sizeOnStack));
 		templ("comma", sizeOnStack > 0 ? "," : "");
-		templ("freeMemoryPointer", to_string(CompilerUtils::freeMemoryPointer));
+		templ("allocateUnbounded", allocateUnboundedFunction());
 		templ("packedEncode", ABIFunctions(m_evmVersion, m_revertStrings, m_functionCollector).tupleEncoderPacked(_givenTypes, _targetTypes));
 		return templ.render();
 	});
@@ -3364,11 +3897,13 @@ string YulUtilFunctions::forwardingRevertFunction()
 		if (forward)
 			return Whiskers(R"(
 				function <functionName>() {
-					returndatacopy(0, 0, returndatasize())
-					revert(0, returndatasize())
+					let pos := <allocateUnbounded>()
+					returndatacopy(pos, 0, returndatasize())
+					revert(pos, returndatasize())
 				}
 			)")
 			("functionName", functionName)
+			("allocateUnbounded", allocateUnboundedFunction())
 			.render();
 		else
 			return Whiskers(R"(
@@ -3383,87 +3918,126 @@ string YulUtilFunctions::forwardingRevertFunction()
 
 std::string YulUtilFunctions::decrementCheckedFunction(Type const& _type)
 {
+	solAssert(_type.category() == Type::Category::Integer, "");
 	IntegerType const& type = dynamic_cast<IntegerType const&>(_type);
 
 	string const functionName = "decrement_" + _type.identifier();
 
 	return m_functionCollector.createFunction(functionName, [&]() {
-		u256 minintval;
-
-		// Smallest admissible value to decrement
-		if (type.isSigned())
-			minintval = 0 - (u256(1) << (type.numBits() - 1)) + 1;
-		else
-			minintval = 1;
-
 		return Whiskers(R"(
 			function <functionName>(value) -> ret {
 				value := <cleanupFunction>(value)
-				if <lt>(value, <minval>) { <panic>() }
+				if eq(value, <minval>) { <panic>() }
 				ret := sub(value, 1)
 			}
 		)")
 		("functionName", functionName)
-		("panic", panicFunction())
-		("minval", toCompactHexWithPrefix(minintval))
-		("lt", type.isSigned() ? "slt" : "lt")
+		("panic", panicFunction(PanicCode::UnderOverflow))
+		("minval", toCompactHexWithPrefix(type.min()))
 		("cleanupFunction", cleanupFunction(_type))
+		.render();
+	});
+}
+
+std::string YulUtilFunctions::decrementWrappingFunction(Type const& _type)
+{
+	solAssert(_type.category() == Type::Category::Integer, "");
+	IntegerType const& type = dynamic_cast<IntegerType const&>(_type);
+
+	string const functionName = "decrement_wrapping_" + _type.identifier();
+
+	return m_functionCollector.createFunction(functionName, [&]() {
+		return Whiskers(R"(
+			function <functionName>(value) -> ret {
+				ret := <cleanupFunction>(sub(value, 1))
+			}
+		)")
+		("functionName", functionName)
+		("cleanupFunction", cleanupFunction(type))
 		.render();
 	});
 }
 
 std::string YulUtilFunctions::incrementCheckedFunction(Type const& _type)
 {
+	solAssert(_type.category() == Type::Category::Integer, "");
 	IntegerType const& type = dynamic_cast<IntegerType const&>(_type);
 
 	string const functionName = "increment_" + _type.identifier();
 
 	return m_functionCollector.createFunction(functionName, [&]() {
-		u256 maxintval;
-
-		// Biggest admissible value to increment
-		if (type.isSigned())
-			maxintval = (u256(1) << (type.numBits() - 1)) - 2;
-		else
-			maxintval = (u256(1) << type.numBits()) - 2;
-
 		return Whiskers(R"(
 			function <functionName>(value) -> ret {
 				value := <cleanupFunction>(value)
-				if <gt>(value, <maxval>) { <panic>() }
+				if eq(value, <maxval>) { <panic>() }
 				ret := add(value, 1)
 			}
 		)")
 		("functionName", functionName)
-		("maxval", toCompactHexWithPrefix(maxintval))
-		("gt", type.isSigned() ? "sgt" : "gt")
-		("panic", panicFunction())
+		("maxval", toCompactHexWithPrefix(type.max()))
+		("panic", panicFunction(PanicCode::UnderOverflow))
 		("cleanupFunction", cleanupFunction(_type))
+		.render();
+	});
+}
+
+std::string YulUtilFunctions::incrementWrappingFunction(Type const& _type)
+{
+	solAssert(_type.category() == Type::Category::Integer, "");
+	IntegerType const& type = dynamic_cast<IntegerType const&>(_type);
+
+	string const functionName = "increment_wrapping_" + _type.identifier();
+
+	return m_functionCollector.createFunction(functionName, [&]() {
+		return Whiskers(R"(
+			function <functionName>(value) -> ret {
+				ret := <cleanupFunction>(add(value, 1))
+			}
+		)")
+		("functionName", functionName)
+		("cleanupFunction", cleanupFunction(type))
 		.render();
 	});
 }
 
 string YulUtilFunctions::negateNumberCheckedFunction(Type const& _type)
 {
+	solAssert(_type.category() == Type::Category::Integer, "");
 	IntegerType const& type = dynamic_cast<IntegerType const&>(_type);
 	solAssert(type.isSigned(), "Expected signed type!");
 
 	string const functionName = "negate_" + _type.identifier();
-
-	u256 const minintval = 0 - (u256(1) << (type.numBits() - 1)) + 1;
-
 	return m_functionCollector.createFunction(functionName, [&]() {
 		return Whiskers(R"(
 			function <functionName>(value) -> ret {
 				value := <cleanupFunction>(value)
-				if slt(value, <minval>) { <panic>() }
+				if eq(value, <minval>) { <panic>() }
 				ret := sub(0, value)
 			}
 		)")
 		("functionName", functionName)
-		("minval", toCompactHexWithPrefix(minintval))
+		("minval", toCompactHexWithPrefix(type.min()))
 		("cleanupFunction", cleanupFunction(_type))
-		("panic", panicFunction())
+		("panic", panicFunction(PanicCode::UnderOverflow))
+		.render();
+	});
+}
+
+string YulUtilFunctions::negateNumberWrappingFunction(Type const& _type)
+{
+	solAssert(_type.category() == Type::Category::Integer, "");
+	IntegerType const& type = dynamic_cast<IntegerType const&>(_type);
+	solAssert(type.isSigned(), "Expected signed type!");
+
+	string const functionName = "negate_wrapping_" + _type.identifier();
+	return m_functionCollector.createFunction(functionName, [&]() {
+		return Whiskers(R"(
+			function <functionName>(value) -> ret {
+				ret := <cleanupFunction>(sub(0, value))
+			}
+		)")
+		("functionName", functionName)
+		("cleanupFunction", cleanupFunction(type))
 		.render();
 	});
 }
@@ -3551,11 +4125,13 @@ string YulUtilFunctions::storageSetToZeroFunction(Type const& _type)
 		if (_type.isValueType())
 			return Whiskers(R"(
 				function <functionName>(slot, offset) {
-					<store>(slot, offset, <zeroValue>())
+					let <values> := <zeroValue>()
+					<store>(slot, offset, <values>)
 				}
 			)")
 			("functionName", functionName)
 			("store", updateStorageValueFunction(_type, _type))
+			("values", suffixedVariableNameList("zero_", 0, _type.sizeOnStack()))
 			("zeroValue", zeroValueFunction(_type))
 			.render();
 		else if (_type.category() == Type::Category::Array)
@@ -3567,7 +4143,7 @@ string YulUtilFunctions::storageSetToZeroFunction(Type const& _type)
 			)")
 			("functionName", functionName)
 			("clearArray", clearStorageArrayFunction(dynamic_cast<ArrayType const&>(_type)))
-			("panic", panicFunction())
+			("panic", panicFunction(PanicCode::Generic))
 			.render();
 		else if (_type.category() == Type::Category::Struct)
 			return Whiskers(R"(
@@ -3578,7 +4154,7 @@ string YulUtilFunctions::storageSetToZeroFunction(Type const& _type)
 			)")
 			("functionName", functionName)
 			("clearStruct", clearStorageStructFunction(dynamic_cast<StructType const&>(_type)))
-			("panic", panicFunction())
+			("panic", panicFunction(PanicCode::Generic))
 			.render();
 		else
 			solUnimplemented("setToZero for type " + _type.identifier() + " not yet implemented!");
@@ -3655,31 +4231,14 @@ string YulUtilFunctions::conversionFunctionSpecial(Type const& _from, Type const
 		}
 		else if (_to.category() == Type::Category::Array)
 		{
-			auto const& arrayType = dynamic_cast<ArrayType const&>(_to);
-			solAssert(arrayType.isByteArray(), "");
-			size_t words = (data.size() + 31) / 32;
-			size_t storageSize = 32 + words * 32;
-
+			solAssert(dynamic_cast<ArrayType const&>(_to).isByteArray(), "");
 			Whiskers templ(R"(
 				function <functionName>() -> converted {
-					converted := <allocate>(<storageSize>)
-					mstore(converted, <size>)
-					<#word>
-						mstore(add(converted, <offset>), <wordValue>)
-					</word>
+					converted := <copyLiteralToMemory>()
 				}
 			)");
 			templ("functionName", functionName);
-			templ("allocate", allocationFunction());
-			templ("storageSize", to_string(storageSize));
-			templ("size", to_string(data.size()));
-			vector<map<string, string>> wordParams(words);
-			for (size_t i = 0; i < words; ++i)
-			{
-				wordParams[i]["offset"] = to_string(32 + i * 32);
-				wordParams[i]["wordValue"] = formatAsStringOrNumber(data.substr(32 * i, 32));
-			}
-			templ("word", wordParams);
+			templ("copyLiteralToMemory", copyLiteralToMemoryFunction(data));
 			return templ.render();
 		}
 		else
@@ -3758,54 +4317,88 @@ string YulUtilFunctions::readFromMemoryOrCalldata(Type const& _type, bool _fromC
 	});
 }
 
-string YulUtilFunctions::revertReasonIfDebug(RevertStrings revertStrings, string const& _message)
+string YulUtilFunctions::revertReasonIfDebugFunction(string const& _message)
 {
-	if (revertStrings >= RevertStrings::Debug && !_message.empty())
-	{
-		Whiskers templ(R"({
-			mstore(0, <sig>)
-			mstore(4, 0x20)
-			mstore(add(4, 0x20), <length>)
-			let reasonPos := add(4, 0x40)
-			<#word>
-				mstore(add(reasonPos, <offset>), <wordValue>)
-			</word>
-			revert(0, add(reasonPos, <end>))
-		})");
-		templ("sig", util::selectorFromSignature("Error(string)").str());
-		templ("length", to_string(_message.length()));
+	string functionName = "revert_error_" + util::toHex(util::keccak256(_message).asBytes());
+	return m_functionCollector.createFunction(functionName, [&](auto&, auto&) -> string {
+		return revertReasonIfDebugBody(m_revertStrings, allocateUnboundedFunction() + "()", _message);
+	});
+}
 
-		size_t words = (_message.length() + 31) / 32;
-		vector<map<string, string>> wordParams(words);
-		for (size_t i = 0; i < words; ++i)
-		{
-			wordParams[i]["offset"] = to_string(i * 32);
-			wordParams[i]["wordValue"] = formatAsStringOrNumber(_message.substr(32 * i, 32));
-		}
-		templ("word", wordParams);
-		templ("end", to_string(words * 32));
-
-		return templ.render();
-	}
-	else
+string YulUtilFunctions::revertReasonIfDebugBody(
+	RevertStrings _revertStrings,
+	string const& _allocation,
+	string const& _message
+)
+{
+	if (_revertStrings < RevertStrings::Debug || _message.empty())
 		return "revert(0, 0)";
+
+	Whiskers templ(R"(
+		let start := <allocate>
+		let pos := start
+		mstore(pos, <sig>)
+		pos := add(pos, 4)
+		mstore(pos, 0x20)
+		pos := add(pos, 0x20)
+		mstore(pos, <length>)
+		pos := add(pos, 0x20)
+		<#word>
+			mstore(add(pos, <offset>), <wordValue>)
+		</word>
+		revert(start, <overallLength>)
+	)");
+	templ("allocate", _allocation);
+	templ("sig", util::selectorFromSignature("Error(string)").str());
+	templ("length", to_string(_message.length()));
+
+	size_t words = (_message.length() + 31) / 32;
+	vector<map<string, string>> wordParams(words);
+	for (size_t i = 0; i < words; ++i)
+	{
+		wordParams[i]["offset"] = to_string(i * 32);
+		wordParams[i]["wordValue"] = formatAsStringOrNumber(_message.substr(32 * i, 32));
+	}
+	templ("word", wordParams);
+	templ("overallLength", to_string(4 + 0x20 + 0x20 + words * 32));
+
+	return templ.render();
 }
 
-string YulUtilFunctions::revertReasonIfDebug(string const& _message)
+string YulUtilFunctions::panicFunction(util::PanicCode _code)
 {
-	return revertReasonIfDebug(m_revertStrings, _message);
-}
-
-string YulUtilFunctions::panicFunction()
-{
-	string functionName = "panic_error";
+	string functionName = "panic_error_" + toCompactHexWithPrefix(uint64_t(_code));
 	return m_functionCollector.createFunction(functionName, [&]() {
 		return Whiskers(R"(
 			function <functionName>() {
-				invalid()
+				mstore(0, <selector>)
+				mstore(4, <code>)
+				revert(0, 0x24)
 			}
 		)")
 		("functionName", functionName)
+		("selector", util::selectorFromSignature("Panic(uint256)").str())
+		("code", toCompactHexWithPrefix(static_cast<unsigned>(_code)))
+		.render();
+	});
+}
+
+string YulUtilFunctions::returnDataSelectorFunction()
+{
+	string const functionName = "return_data_selector";
+	solAssert(m_evmVersion.supportsReturndata(), "");
+
+	return m_functionCollector.createFunction(functionName, [&]() {
+		return util::Whiskers(R"(
+			function <functionName>() -> sig {
+				if gt(returndatasize(), 3) {
+					returndatacopy(0, 0, 4)
+					sig := <shr224>(mload(0))
+				}
+			}
+		)")
+		("functionName", functionName)
+		("shr224", shiftRightFunction(224))
 		.render();
 	});
 }
@@ -3813,17 +4406,14 @@ string YulUtilFunctions::panicFunction()
 string YulUtilFunctions::tryDecodeErrorMessageFunction()
 {
 	string const functionName = "try_decode_error_message";
+	solAssert(m_evmVersion.supportsReturndata(), "");
 
 	return m_functionCollector.createFunction(functionName, [&]() {
 		return util::Whiskers(R"(
 			function <functionName>() -> ret {
 				if lt(returndatasize(), 0x44) { leave }
 
-				returndatacopy(0, 0, 4)
-				let sig := <shr224>(mload(0))
-				if iszero(eq(sig, 0x<ErrorSignature>)) { leave }
-
-				let data := mload(<freeMemoryPointer>)
+				let data := <allocateUnbounded>()
 				returndatacopy(data, 4, sub(returndatasize(), 4))
 
 				let offset := mload(data)
@@ -3839,17 +4429,35 @@ string YulUtilFunctions::tryDecodeErrorMessageFunction()
 				if gt(length, 0xffffffffffffffff) { leave }
 
 				let end := add(add(msg, 0x20), length)
-				if gt(end, add(data, returndatasize())) { leave }
+				if gt(end, add(data, sub(returndatasize(), 4))) { leave }
 
-				mstore(<freeMemoryPointer>, add(add(msg, 0x20), <roundUp>(length)))
+				<finalizeAllocation>(data, add(offset, add(0x20, length)))
 				ret := msg
 			}
 		)")
 		("functionName", functionName)
-		("shr224", shiftRightFunction(224))
-		("ErrorSignature", FixedHash<4>(util::keccak256("Error(string)")).hex())
-		("freeMemoryPointer", to_string(CompilerUtils::freeMemoryPointer))
-		("roundUp", roundUpFunction())
+		("allocateUnbounded", allocateUnboundedFunction())
+		("finalizeAllocation", finalizeAllocationFunction())
+		.render();
+	});
+}
+
+string YulUtilFunctions::tryDecodePanicDataFunction()
+{
+	string const functionName = "try_decode_panic_data";
+	solAssert(m_evmVersion.supportsReturndata(), "");
+
+	return m_functionCollector.createFunction(functionName, [&]() {
+		return util::Whiskers(R"(
+			function <functionName>() -> success, data {
+				if gt(returndatasize(), 0x23) {
+					returndatacopy(0, 4, 0x20)
+					success := 1
+					data := mload(0)
+				}
+			}
+		)")
+		("functionName", functionName)
 		.render();
 	});
 }
@@ -3867,13 +4475,7 @@ string YulUtilFunctions::extractReturndataFunction()
 						data := <emptyArray>()
 					}
 					default {
-						// allocate some memory into data of size returndatasize() + PADDING
-						data := <allocate>(<roundUp>(add(returndatasize(), 0x20)))
-
-						// store array length into the front
-						mstore(data, returndatasize())
-
-						// append to data
+						data := <allocateArray>(returndatasize())
 						returndatacopy(add(data, 0x20), 0, returndatasize())
 					}
 				<!supportsReturndata>
@@ -3883,8 +4485,7 @@ string YulUtilFunctions::extractReturndataFunction()
 		)")
 		("functionName", functionName)
 		("supportsReturndata", m_evmVersion.supportsReturndata())
-		("allocate", allocationFunction())
-		("roundUp", roundUpFunction())
+		("allocateArray", allocateMemoryArrayFunction(*TypeProvider::bytesMemory()))
 		("emptyArray", zeroValueFunction(*TypeProvider::bytesMemory()))
 		.render();
 	});
@@ -3903,7 +4504,7 @@ string YulUtilFunctions::copyConstructorArgumentsToMemoryFunction(
 		toString(_contract.id());
 
 	return m_functionCollector.createFunction(functionName, [&]() {
-		string returnParams = suffixedVariableNameList("ret_param_",0, _contract.constructor()->parameters().size());
+		string returnParams = suffixedVariableNameList("ret_param_",0, CompilerUtils::sizeOnStack(_contract.constructor()->parameters()));
 		ABIFunctions abiFunctions(m_evmVersion, m_revertStrings, m_functionCollector);
 
 		return util::Whiskers(R"(
@@ -3922,6 +4523,24 @@ string YulUtilFunctions::copyConstructorArgumentsToMemoryFunction(
 		("object", _creationObjectName)
 		("allocate", allocationFunction())
 		("abiDecode", abiFunctions.tupleDecoder(FunctionType(*_contract.constructor()).parameterTypes(), true))
+		.render();
+	});
+}
+
+string YulUtilFunctions::externalCodeFunction()
+{
+	string functionName = "external_code_at";
+
+	return m_functionCollector.createFunction(functionName, [&]() {
+		return util::Whiskers(R"(
+			function <functionName>(addr) -> mpos {
+				let length := extcodesize(addr)
+				mpos := <allocateArray>(length)
+				extcodecopy(addr, add(mpos, 0x20), 0, length)
+			}
+		)")
+		("functionName", functionName)
+		("allocateArray", allocateMemoryArrayFunction(*TypeProvider::bytesMemory()))
 		.render();
 	});
 }

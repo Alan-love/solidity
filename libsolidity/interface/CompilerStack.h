@@ -24,18 +24,21 @@
 
 #pragma once
 
+#include <libsolidity/analysis/FunctionCallGraph.h>
 #include <libsolidity/interface/ReadFile.h>
+#include <libsolidity/interface/ImportRemapper.h>
 #include <libsolidity/interface/OptimiserSettings.h>
 #include <libsolidity/interface/Version.h>
 #include <libsolidity/interface/DebugSettings.h>
 
-#include <libsolidity/formal/ModelChecker.h>
+#include <libsolidity/formal/ModelCheckerSettings.h>
 
 #include <libsmtutil/SolverInterface.h>
 
 #include <liblangutil/ErrorReporter.h>
 #include <liblangutil/EVMVersion.h>
 #include <liblangutil/SourceLocation.h>
+#include <liblangutil/CharStreamProvider.h>
 
 #include <libevmasm/LinkerObject.h>
 
@@ -43,7 +46,6 @@
 #include <libsolutil/FixedHash.h>
 #include <libsolutil/LazyInit.h>
 
-#include <boost/noncopyable.hpp>
 #include <json/json.h>
 
 #include <functional>
@@ -56,6 +58,7 @@
 namespace solidity::langutil
 {
 class Scanner;
+class CharStream;
 }
 
 
@@ -86,9 +89,13 @@ class DeclarationContainer;
  * If error recovery is active, it is possible to progress through the stages even when
  * there are errors. In any case, producing code is only possible without errors.
  */
-class CompilerStack: boost::noncopyable
+class CompilerStack: public langutil::CharStreamProvider
 {
 public:
+	/// Noncopyable.
+	CompilerStack(CompilerStack const&) = delete;
+	CompilerStack& operator=(CompilerStack const&) = delete;
+
 	enum State {
 		Empty,
 		SourcesSet,
@@ -98,17 +105,16 @@ public:
 		CompilationSuccessful
 	};
 
+	enum class MetadataFormat {
+		WithReleaseVersionTag,
+		WithPrereleaseVersionTag,
+		NoMetadata
+	};
+
 	enum class MetadataHash {
 		IPFS,
 		Bzzr1,
 		None
-	};
-
-	struct Remapping
-	{
-		std::string context;
-		std::string prefix;
-		std::string target;
 	};
 
 	/// Creates a new compiler stack.
@@ -116,7 +122,7 @@ public:
 	/// and must not emit exceptions.
 	explicit CompilerStack(ReadCallback::Callback _readFile = ReadCallback::Callback());
 
-	~CompilerStack();
+	~CompilerStack() override;
 
 	/// @returns the list of errors that occurred during parsing and type checking.
 	langutil::ErrorList const& errors() const { return m_errorReporter.errors(); }
@@ -132,12 +138,9 @@ public:
 	/// all settings are reset as well.
 	void reset(bool _keepSettings = false);
 
-	// Parses a remapping of the format "context:prefix=target".
-	static std::optional<Remapping> parseRemapping(std::string const& _remapping);
-
 	/// Sets path remappings.
 	/// Must be set before parsing.
-	void setRemappings(std::vector<Remapping> const& _remappings);
+	void setRemappings(std::vector<ImportRemapper::Remapping> _remappings);
 
 	/// Sets library addresses. Addresses are cleared iff @a _libraries is missing.
 	/// Must be set before parsing.
@@ -145,7 +148,7 @@ public:
 
 	/// Changes the optimiser settings.
 	/// Must be set before parsing.
-	void setOptimiserSettings(bool _optimize, unsigned _runs = 200);
+	void setOptimiserSettings(bool _optimize, size_t _runs = OptimiserSettings{}.expectedExecutionsPerDeployment);
 
 	/// Changes the optimiser settings.
 	/// Must be set before parsing.
@@ -238,16 +241,15 @@ public:
 	/// by sourceNames().
 	std::map<std::string, unsigned> sourceIndices() const;
 
-	/// @returns the previously used scanner, useful for counting lines during error reporting.
-	langutil::Scanner const& scanner(std::string const& _sourceName) const;
+	/// @returns the previously used character stream, useful for counting lines during error reporting.
+	langutil::CharStream const& charStream(std::string const& _sourceName) const override;
 
 	/// @returns the parsed source unit with the supplied name.
 	SourceUnit const& ast(std::string const& _sourceName) const;
 
-	/// Helper function for logs printing. Do only use in error cases, it's quite expensive.
-	/// line and columns are numbered starting from 1 with following order:
-	/// start line, start column, end line, end column
-	std::tuple<int, int, int, int> positionFromSourceLocation(langutil::SourceLocation const& _sourceLocation) const;
+	/// @returns the parsed contract with the supplied name. Throws an exception if the contract
+	/// does not exist.
+	ContractDefinition const& contractDefinition(std::string const& _contractName) const;
 
 	/// @returns a list of unhandled queries to the SMT solver (has to be supplied in a second run
 	/// by calling @a addSMTLib2Response).
@@ -256,8 +258,8 @@ public:
 	/// @returns a list of the contract names in the sources.
 	std::vector<std::string> contractNames() const;
 
-	/// @returns the name of the last contract.
-	std::string const lastContractName() const;
+	/// @returns the name of the last contract. If _sourceName is defined the last contract of that source will be returned.
+	std::string const lastContractName(std::optional<std::string> const& _sourceName = std::nullopt) const;
 
 	/// @returns either the contract's name or a mixture of its name and source file, sanitized for filesystem use
 	std::string const filesystemFriendlyName(std::string const& _contractName) const;
@@ -301,7 +303,7 @@ public:
 	/// @return a verbose text representation of the assembly.
 	/// @arg _sourceCodes is the map of input files to source code strings
 	/// Prerequisite: Successful compilation.
-	std::string assemblyString(std::string const& _contractName, StringMap _sourceCodes = StringMap()) const;
+	std::string assemblyString(std::string const& _contractName, StringMap const& _sourceCodes = StringMap()) const;
 
 	/// @returns a JSON representation of the assembly.
 	/// @arg _sourceCodes is the map of input files to source code strings
@@ -336,8 +338,10 @@ public:
 	/// @returns a JSON representing the estimated gas usage for contract creation, internal and external functions
 	Json::Value gasEstimates(std::string const& _contractName) const;
 
-	/// Overwrites the release/prerelease flag. Should only be used for testing.
-	void overwriteReleaseFlag(bool release) { m_release = release; }
+	/// Changes the format of the metadata appended at the end of the bytecode.
+	/// This is mostly a workaround to avoid bytecode and gas differences between compiler builds
+	/// caused by differences in metadata. Should only be used for testing.
+	void setMetadataFormat(MetadataFormat _metadataFormat) { m_metadataFormat = _metadataFormat; }
 private:
 	/// The state per source unit. Filled gradually during parsing.
 	struct Source
@@ -377,6 +381,9 @@ private:
 		mutable std::optional<std::string const> runtimeSourceMapping;
 	};
 
+	void createAndAssignCallGraphs();
+	void findAndReportCyclicContractDependencies();
+
 	/// Loads the missing sources from @a _ast (named @a _path) using the callback
 	/// @a m_readFile and stores the absolute paths of all imports in the AST annotations.
 	/// @returns the newly loaded sources.
@@ -392,6 +399,14 @@ private:
 
 	/// @returns true if the contract is requested to be compiled.
 	bool isRequestedContract(ContractDefinition const& _contract) const;
+
+	/// Assembles the contract.
+	/// This function should only be internally called by compileContract and generateEVMFromIR.
+	void assemble(
+		ContractDefinition const& _contract,
+		std::shared_ptr<evmasm::Assembly> _assembly,
+		std::shared_ptr<evmasm::Assembly> _runtimeAssembly
+	);
 
 	/// Compile a single contract.
 	/// @param _otherCompilers provides access to compilers of other contracts, to get
@@ -424,10 +439,6 @@ private:
 	/// @returns the source object for the given @a _sourceName.
 	/// Can only be called after state is SourcesSet.
 	Source const& source(std::string const& _sourceName) const;
-
-	/// @returns the parsed contract with the supplied name. Throws an exception if the contract
-	/// does not exist.
-	ContractDefinition const& contractDefinition(std::string const& _contractName) const;
 
 	/// @returns the metadata JSON as a compact string for the given contract.
 	std::string createMetadata(Contract const& _contract) const;
@@ -475,9 +486,7 @@ private:
 	bool m_generateIR = false;
 	bool m_generateEwasm = false;
 	std::map<std::string, util::h160> m_libraries;
-	/// list of path prefix remappings, e.g. mylibrary: github.com/ethereum = /usr/local/ethereum
-	/// "context:prefix=target"
-	std::vector<Remapping> m_remappings;
+	ImportRemapper m_importRemapper;
 	std::map<std::string const, Source> m_sources;
 	// if imported, store AST-JSONS for each filename
 	std::map<std::string, Json::Value> m_sourceJsons;
@@ -486,6 +495,7 @@ private:
 	std::shared_ptr<GlobalContext> m_globalContext;
 	std::vector<Source const*> m_sourceOrder;
 	std::map<std::string const, Contract> m_contracts;
+
 	langutil::ErrorList m_errorList;
 	langutil::ErrorReporter m_errorReporter;
 	bool m_metadataLiteralSources = false;
@@ -496,7 +506,7 @@ private:
 	/// Whether or not there has been an error during processing.
 	/// If this is true, the stack will refuse to generate code.
 	bool m_hasError = false;
-	bool m_release = VersionIsRelease;
+	MetadataFormat m_metadataFormat = VersionIsRelease ? MetadataFormat::WithReleaseVersionTag : MetadataFormat::WithPrereleaseVersionTag;
 };
 
 }

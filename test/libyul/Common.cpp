@@ -26,7 +26,6 @@
 #include <liblangutil/SourceReferenceFormatter.h>
 
 #include <libyul/optimiser/Disambiguator.h>
-#include <libyul/AsmParser.h>
 #include <libyul/AsmAnalysis.h>
 #include <libyul/AsmPrinter.h>
 #include <libyul/AssemblyStack.h>
@@ -53,15 +52,6 @@ Dialect const& defaultDialect(bool _yul)
 	return _yul ? yul::Dialect::yulDeprecated() : yul::EVMDialect::strictAssemblyForEVM(solidity::test::CommonOptions::get().evmVersion());
 }
 }
-
-void yul::test::printErrors(ErrorList const& _errors)
-{
-	SourceReferenceFormatter formatter(cout);
-
-	for (auto const& error: _errors)
-		formatter.printErrorInformation(*error);
-}
-
 
 pair<shared_ptr<Block>, shared_ptr<yul::AsmAnalysisInfo>> yul::test::parse(string const& _source, bool _yul)
 {

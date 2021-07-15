@@ -154,12 +154,12 @@ vector<ContractDefinition const*> resolveDirectBaseContracts(ContractDefinition 
 	return resolvedContracts;
 }
 
-vector<ASTPointer<UserDefinedTypeName>> sortByContract(vector<ASTPointer<UserDefinedTypeName>> const& _list)
+vector<ASTPointer<IdentifierPath>> sortByContract(vector<ASTPointer<IdentifierPath>> const& _list)
 {
 	auto sorted = _list;
 
 	stable_sort(sorted.begin(), sorted.end(),
-		[] (ASTPointer<UserDefinedTypeName> _a, ASTPointer<UserDefinedTypeName> _b) {
+		[] (ASTPointer<IdentifierPath> _a, ASTPointer<IdentifierPath> _b) {
 			if (!_a || !_b)
 				return _a < _b;
 
@@ -573,6 +573,19 @@ void OverrideChecker::checkOverride(OverrideProxy const& _overriding, OverridePr
 			);
 	}
 
+	if (_overriding.unimplemented() && !_super.unimplemented())
+	{
+		solAssert(!_overriding.isVariable() || !_overriding.unimplemented(), "");
+		overrideError(
+			_overriding,
+			_super,
+			4593_error,
+			"Overriding an implemented " + _super.astNodeName() +
+			" with an unimplemented " + _overriding.astNodeName() +
+			" is not allowed."
+		);
+	}
+
 	if (_super.isFunction())
 	{
 		FunctionType const* functionType = _overriding.functionType();
@@ -613,14 +626,6 @@ void OverrideChecker::checkOverride(OverrideProxy const& _overriding, OverridePr
 				stateMutabilityToString(_overriding.stateMutability()) +
 				"\"."
 			);
-
-		if (_overriding.unimplemented() && !_super.unimplemented())
-			overrideError(
-				_overriding,
-				_super,
-				4593_error,
-				"Overriding an implemented function with an unimplemented function is not allowed."
-			);
 	}
 }
 
@@ -656,23 +661,21 @@ void OverrideChecker::overrideListError(
 	);
 }
 
-void OverrideChecker::overrideError(Declaration const& _overriding, Declaration const& _super, ErrorId _error, string const& _message, string const& _secondaryMsg)
+void OverrideChecker::overrideError(
+	OverrideProxy const& _overriding,
+	OverrideProxy const& _super,
+	ErrorId _error,
+	string const& _message,
+	optional<string> const& _secondaryMsg
+)
 {
 	m_errorReporter.typeError(
 		_error,
 		_overriding.location(),
-		SecondarySourceLocation().append(_secondaryMsg, _super.location()),
-		_message
-	);
-}
-
-
-void OverrideChecker::overrideError(OverrideProxy const& _overriding, OverrideProxy const& _super, ErrorId _error, string const& _message, string const& _secondaryMsg)
-{
-	m_errorReporter.typeError(
-		_error,
-		_overriding.location(),
-		SecondarySourceLocation().append(_secondaryMsg, _super.location()),
+		SecondarySourceLocation().append(
+			_secondaryMsg.value_or("Overridden " + _super.astNodeName() + " is here:"),
+			_super.location()
+		),
 		_message
 	);
 }
@@ -780,7 +783,7 @@ set<ContractDefinition const*, OverrideChecker::CompareByID> OverrideChecker::re
 {
 	set<ContractDefinition const*, CompareByID> resolved;
 
-	for (ASTPointer<UserDefinedTypeName> const& override: _overrides.overrides())
+	for (ASTPointer<IdentifierPath> const& override: _overrides.overrides())
 	{
 		Declaration const* decl  = override->annotation().referencedDeclaration;
 		solAssert(decl, "Expected declaration to be resolved.");
@@ -805,7 +808,7 @@ void OverrideChecker::checkOverrideList(OverrideProxy _item, OverrideProxyBySign
 	if (_item.overrides() && specifiedContracts.size() != _item.overrides()->overrides().size())
 	{
 		// Sort by contract id to find duplicate for error reporting
-		vector<ASTPointer<UserDefinedTypeName>> list =
+		vector<ASTPointer<IdentifierPath>> list =
 			sortByContract(_item.overrides()->overrides());
 
 		// Find duplicates and output error
@@ -825,7 +828,7 @@ void OverrideChecker::checkOverrideList(OverrideProxy _item, OverrideProxyBySign
 					list[i]->location(),
 					ssl,
 					"Duplicate contract \"" +
-					joinHumanReadable(list[i]->namePath(), ".") +
+					joinHumanReadable(list[i]->path(), ".") +
 					"\" found in override list of \"" +
 					_item.name() +
 					"\"."

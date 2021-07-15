@@ -27,12 +27,17 @@
 
 #include <test/evmc/evmc.hpp>
 
+#include <test/libsolidity/util/SoltestTypes.h>
+
 #include <libsolutil/CommonIO.h>
+#include <libsolutil/FunctionSelector.h>
 
 #include <liblangutil/Exceptions.h>
 
 #include <boost/test/framework.hpp>
 #include <boost/algorithm/string/replace.hpp>
+#include <range/v3/range.hpp>
+#include <range/v3/view/transform.hpp>
 
 #include <cstdlib>
 
@@ -40,6 +45,7 @@ using namespace std;
 using namespace solidity;
 using namespace solidity::util;
 using namespace solidity::test;
+using namespace solidity::frontend::test;
 
 ExecutionFramework::ExecutionFramework():
 	ExecutionFramework(solidity::test::CommonOptions::get().evmVersion(), solidity::test::CommonOptions::get().vmPaths)
@@ -110,6 +116,14 @@ std::pair<bool, string> ExecutionFramework::compareAndCreateMessage(
 			"\n";
 	}
 	return make_pair(false, message);
+}
+
+bytes ExecutionFramework::panicData(util::PanicCode _code)
+{
+	return
+		m_evmVersion.supportsReturndata() ?
+		toCompactBigEndian(selectorFromSignature32("Panic(uint256)"), 4) + encode(u256(static_cast<unsigned>(_code))) :
+		bytes();
 }
 
 u256 ExecutionFramework::gasLimit() const
@@ -224,7 +238,7 @@ h160 ExecutionFramework::account(size_t _idx)
 	return h160(h256(u256{"0x1212121212121212121212121212120000000012"} + _idx * 0x1000), h160::AlignRight);
 }
 
-bool ExecutionFramework::addressHasCode(h160 const& _addr)
+bool ExecutionFramework::addressHasCode(h160 const& _addr) const
 {
 	return m_evmcHost->get_code_size(EVMHost::convertToEVMC(_addr)) != 0;
 }
@@ -257,12 +271,12 @@ bytes ExecutionFramework::logData(size_t _logIdx) const
 	return {data.begin(), data.end()};
 }
 
-u256 ExecutionFramework::balanceAt(h160 const& _addr)
+u256 ExecutionFramework::balanceAt(h160 const& _addr) const
 {
 	return u256(EVMHost::convertFromEVMC(m_evmcHost->get_balance(EVMHost::convertToEVMC(_addr))));
 }
 
-bool ExecutionFramework::storageEmpty(h160 const& _addr)
+bool ExecutionFramework::storageEmpty(h160 const& _addr) const
 {
 	const auto it = m_evmcHost->accounts.find(EVMHost::convertToEVMC(_addr));
 	if (it != m_evmcHost->accounts.end())
@@ -272,4 +286,16 @@ bool ExecutionFramework::storageEmpty(h160 const& _addr)
 				return false;
 	}
 	return true;
+}
+
+vector<solidity::frontend::test::LogRecord> ExecutionFramework::recordedLogs() const
+{
+	vector<LogRecord> logs;
+	for (evmc::MockedHost::log_record const& logRecord: m_evmcHost->recorded_logs)
+		logs.emplace_back(
+			EVMHost::convertFromEVMC(logRecord.creator),
+			bytes{logRecord.data.begin(), logRecord.data.end()},
+			logRecord.topics | ranges::views::transform([](evmc::bytes32 _bytes) { return EVMHost::convertFromEVMC(_bytes); }) | ranges::to<vector>
+		);
+	return logs;
 }

@@ -60,7 +60,6 @@ if (("${CMAKE_CXX_COMPILER_ID}" MATCHES "GNU") OR ("${CMAKE_CXX_COMPILER_ID}" MA
 	eth_add_cxx_compiler_flag_if_supported(-Wfinal-dtor-non-final-class)
 	eth_add_cxx_compiler_flag_if_supported(-Wnewline-eof)
 	eth_add_cxx_compiler_flag_if_supported(-Wsuggest-destructor-override)
-	eth_add_cxx_compiler_flag_if_supported(-Wunreachable-code-break)
 	eth_add_cxx_compiler_flag_if_supported(-Wduplicated-cond)
 	eth_add_cxx_compiler_flag_if_supported(-Wduplicate-enum)
 	eth_add_cxx_compiler_flag_if_supported(-Wlogical-op)
@@ -151,7 +150,8 @@ if (("${CMAKE_CXX_COMPILER_ID}" MATCHES "GNU") OR ("${CMAKE_CXX_COMPILER_ID}" MA
 			set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -s WASM_ASYNC_COMPILATION=0")
 			# Output a single js file with the wasm binary embedded as base64 string.
 			set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -s SINGLE_FILE=1")
-
+			# Allow new functions to be added to the wasm module via addFunction.
+			set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -s ALLOW_TABLE_GROWTH=1")
 			# Disable warnings about not being pure asm.js due to memory growth.
 			set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-almost-asm")
 		endif()

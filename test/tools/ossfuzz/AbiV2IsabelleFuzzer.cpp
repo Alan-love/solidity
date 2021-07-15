@@ -14,19 +14,25 @@
 	You should have received a copy of the GNU General Public License
 	along with solidity.  If not, see <http://www.gnu.org/licenses/>.
 */
+// SPDX-License-Identifier: GPL-3.0
 
-#include <test/tools/ossfuzz/abiV2FuzzerCommon.h>
+#include <test/tools/ossfuzz/SolidityEvmoneInterface.h>
 
 #include <test/tools/ossfuzz/protoToAbiV2.h>
 
 #include <src/libfuzzer/libfuzzer_macro.h>
 #include <abicoder.hpp>
 
+using namespace solidity::frontend;
+using namespace solidity::test::fuzzer;
 using namespace solidity::test::abiv2fuzzer;
 using namespace solidity::test;
+using namespace solidity::util;
+using namespace solidity;
 using namespace std;
 
 static constexpr size_t abiCoderHeapSize = 1024 * 512;
+static evmc::VM evmone = evmc::VM{evmc_create_evmone()};
 
 DEFINE_PROTO_FUZZER(Contract const& _contract)
 {
@@ -43,13 +49,34 @@ DEFINE_PROTO_FUZZER(Contract const& _contract)
 
 	string typeString = converter.isabelleTypeString();
 	string valueString = converter.isabelleValueString();
-	std::cout << typeString << std::endl;
-	std::cout << valueString << std::endl;
 	abicoder::ABICoder coder(abiCoderHeapSize);
-	if (!typeString.empty())
+	if (!typeString.empty() && converter.coderFunction())
 	{
 		auto [encodeStatus, encodedData] = coder.encode(typeString, valueString);
 		solAssert(encodeStatus, "Isabelle abicoder fuzzer: Encoding failed");
+
+		// We target the default EVM which is the latest
+		langutil::EVMVersion version;
+		EVMHost hostContext(version, evmone);
+		string contractName = "C";
+		StringMap source({{"test.sol", contractSource}});
+		CompilerInput cInput(version, source, contractName, OptimiserSettings::minimal(), {});
+		EvmoneUtility evmoneUtil(
+			hostContext,
+			cInput,
+			contractName,
+			{},
+			{}
+		);
+		auto result = evmoneUtil.compileDeployAndExecute(encodedData);
+		if (result.has_value())
+		{
+			solAssert(result->status_code != EVMC_REVERT, "Proto ABIv2 fuzzer: EVM One reverted.");
+			if (result->status_code == EVMC_SUCCESS)
+				solAssert(
+					EvmoneUtility::zeroWord(result->output_data, result->output_size),
+					"Proto ABIv2 fuzzer: ABIv2 coding failure found."
+				);
+		}
 	}
-	return;
 }

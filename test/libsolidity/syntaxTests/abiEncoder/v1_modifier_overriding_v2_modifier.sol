@@ -11,12 +11,13 @@ contract A {
 
 contract B {
     modifier validate() virtual {
-        A(0x00).get();
+        A(address(0x00)).get();
         _;
     }
 }
 
 ==== Source: B ====
+pragma abicoder v1;
 import "A";
 
 contract C is B {

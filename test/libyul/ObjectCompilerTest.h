@@ -20,6 +20,8 @@
 
 #include <test/TestCase.h>
 
+#include <libsolidity/interface/OptimiserSettings.h>
+
 namespace solidity::langutil
 {
 class Scanner;
@@ -52,9 +54,7 @@ private:
 	bool parse(std::ostream& _stream, std::string const& _linePrefix, bool const _formatted);
 	void disambiguate();
 
-	static void printErrors(std::ostream& _stream, langutil::ErrorList const& _errors);
-
-	bool m_optimize = false;
+	frontend::OptimisationPreset m_optimisationPreset;
 	bool m_wasm = false;
 };
 

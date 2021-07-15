@@ -57,11 +57,11 @@ BOOST_AUTO_TEST_CASE(all_assembly_items)
 		{ "sub.asm", 1 }
 	};
 	Assembly _assembly;
-	auto root_asm = make_shared<CharStream>("lorem ipsum", "root.asm");
+	auto root_asm = make_shared<string>("root.asm");
 	_assembly.setSourceLocation({1, 3, root_asm});
 
 	Assembly _subAsm;
-	auto sub_asm = make_shared<CharStream>("lorem ipsum", "sub.asm");
+	auto sub_asm = make_shared<string>("sub.asm");
 	_subAsm.setSourceLocation({6, 8, sub_asm});
 	// PushImmutable
 	_subAsm.appendImmutable("someImmutable");
@@ -91,22 +91,22 @@ BOOST_AUTO_TEST_CASE(all_assembly_items)
 	// PushDeployTimeAddress
 	_assembly.append(PushDeployTimeAddress);
 	// AssignImmutable.
-	// Note that since there is no reference to "someOtherImmutable", this will compile to a simple POP in the hex output.
+	// Note that since there is no reference to "someOtherImmutable", this will just compile to two POPs in the hex output.
 	_assembly.appendImmutableAssignment("someOtherImmutable");
 	_assembly.append(u256(2));
 	_assembly.appendImmutableAssignment("someImmutable");
 	// Operation
 	_assembly.append(Instruction::STOP);
-	_assembly.appendAuxiliaryDataToEnd(bytes{0x42, 0x66});
-	_assembly.appendAuxiliaryDataToEnd(bytes{0xee, 0xaa});
+	_assembly.appendToAuxiliaryData(bytes{0x42, 0x66});
+	_assembly.appendToAuxiliaryData(bytes{0xee, 0xaa});
 
 	checkCompilation(_assembly);
 
 	BOOST_CHECK_EQUAL(
 		_assembly.assemble().toHex(),
 		"5b6001600220606f73__$bf005014d9d0f534b8fcb268bd84c491a2$__"
-		"60005660676022604573000000000000000000000000000000000000000050"
-		"60028060015250"
+		"6000566067602260457300000000000000000000000000000000000000005050"
+		"600260010152"
 		"00fe"
 		"7f0000000000000000000000000000000000000000000000000000000000000000"
 		"fe010203044266eeaa"
@@ -172,11 +172,11 @@ BOOST_AUTO_TEST_CASE(immutable)
 		{ "sub.asm", 1 }
 	};
 	Assembly _assembly;
-	auto root_asm = make_shared<CharStream>("lorem ipsum", "root.asm");
+	auto root_asm = make_shared<string>("root.asm");
 	_assembly.setSourceLocation({1, 3, root_asm});
 
 	Assembly _subAsm;
-	auto sub_asm = make_shared<CharStream>("lorem ipsum", "sub.asm");
+	auto sub_asm = make_shared<string>("sub.asm");
 	_subAsm.setSourceLocation({6, 8, sub_asm});
 	_subAsm.appendImmutable("someImmutable");
 	_subAsm.appendImmutable("someOtherImmutable");
@@ -184,8 +184,10 @@ BOOST_AUTO_TEST_CASE(immutable)
 	shared_ptr<Assembly> _subAsmPtr = make_shared<Assembly>(_subAsm);
 
 	_assembly.append(u256(42));
+	_assembly.append(u256(0));
 	_assembly.appendImmutableAssignment("someImmutable");
 	_assembly.append(u256(23));
+	_assembly.append(u256(0));
 	_assembly.appendImmutableAssignment("someOtherImmutable");
 
 	auto sub = _assembly.appendSubroutine(_subAsmPtr);
@@ -198,21 +200,22 @@ BOOST_AUTO_TEST_CASE(immutable)
 		// root.asm
 		// assign "someImmutable"
 		"602a" // PUSH1 42 - value for someImmutable
-		"80" // DUP1
+		"6000" // PUSH1 0 - offset of code into which to insert the immutable
+		"8181" // DUP2 DUP2
 		"6001" // PUSH1 1 - offset of first someImmutable in sub_0
+		"01" // ADD - add offset of immutable to offset of code
 		"52" // MSTORE
-		"80" // DUP1
 		"6043" // PUSH1 67 - offset of second someImmutable in sub_0
+		"01" // ADD - add offset of immutable to offset of code
 		"52" // MSTORE
-		"50" // POP
 		// assign "someOtherImmutable"
 		"6017" // PUSH1 23 - value for someOtherImmutable
-		"80" // DUP1
+		"6000" // PUSH1 0 - offset of code into which to insert the immutable
 		"6022" // PUSH1 34 - offset of someOtherImmutable in sub_0
+		"01" // ADD - add offset of immutable to offset of code
 		"52" // MSTORE
-		"50" // POP
 		"6063" // PUSH1 0x63 - dataSize(sub_0)
-		"6017" // PUSH1 0x17 - dataOffset(sub_0)
+		"601b" // PUSH1 0x23 - dataOffset(sub_0)
 		"fe" // INVALID
 		// end of root.asm
 		// sub.asm
@@ -224,8 +227,10 @@ BOOST_AUTO_TEST_CASE(immutable)
 		_assembly.assemblyString(),
 		"    /* \"root.asm\":1:3   */\n"
 		"  0x2a\n"
+		"  0x00\n"
 		"  assignImmutable(\"0x26f2c0195e9d408feff3abd77d83f2971f3c9a18d1e8a9437c7835ae4211fc9f\")\n"
 		"  0x17\n"
+		"  0x00\n"
 		"  assignImmutable(\"0xc3978657661c4d8e32e3d5f42597c009f0d3859e9f9d0d94325268f9799e2bfb\")\n"
 		"  dataSize(sub_0)\n"
 		"  dataOffset(sub_0)\n"
@@ -242,8 +247,10 @@ BOOST_AUTO_TEST_CASE(immutable)
 		util::jsonCompactPrint(_assembly.assemblyJSON(indices)),
 		"{\".code\":["
 		"{\"begin\":1,\"end\":3,\"name\":\"PUSH\",\"source\":0,\"value\":\"2A\"},"
+		"{\"begin\":1,\"end\":3,\"name\":\"PUSH\",\"source\":0,\"value\":\"0\"},"
 		"{\"begin\":1,\"end\":3,\"name\":\"ASSIGNIMMUTABLE\",\"source\":0,\"value\":\"someImmutable\"},"
 		"{\"begin\":1,\"end\":3,\"name\":\"PUSH\",\"source\":0,\"value\":\"17\"},"
+		"{\"begin\":1,\"end\":3,\"name\":\"PUSH\",\"source\":0,\"value\":\"0\"},"
 		"{\"begin\":1,\"end\":3,\"name\":\"ASSIGNIMMUTABLE\",\"source\":0,\"value\":\"someOtherImmutable\"},"
 		"{\"begin\":1,\"end\":3,\"name\":\"PUSH #[$]\",\"source\":0,\"value\":\"0000000000000000000000000000000000000000000000000000000000000000\"},"
 		"{\"begin\":1,\"end\":3,\"name\":\"PUSH [$]\",\"source\":0,\"value\":\"0000000000000000000000000000000000000000000000000000000000000000\"}"

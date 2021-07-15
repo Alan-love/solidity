@@ -22,14 +22,12 @@
 #include <test/tools/yulInterpreter/Interpreter.h>
 
 #include <libyul/AsmAnalysisInfo.h>
-#include <libyul/AsmParser.h>
 #include <libyul/AsmAnalysis.h>
 #include <libyul/Dialect.h>
 #include <libyul/backends/evm/EVMDialect.h>
 #include <libyul/AssemblyStack.h>
 
 #include <liblangutil/Exceptions.h>
-#include <liblangutil/ErrorReporter.h>
 #include <liblangutil/EVMVersion.h>
 #include <liblangutil/SourceReferenceFormatter.h>
 
@@ -55,12 +53,6 @@ namespace po = boost::program_options;
 namespace
 {
 
-void printErrors(ErrorList const& _errors)
-{
-	for (auto const& error: _errors)
-		SourceReferenceFormatter(cout).printErrorInformation(*error);
-}
-
 pair<shared_ptr<Block>, shared_ptr<AsmAnalysisInfo>> parse(string const& _source)
 {
 	AssemblyStack stack(
@@ -75,7 +67,7 @@ pair<shared_ptr<Block>, shared_ptr<AsmAnalysisInfo>> parse(string const& _source
 	}
 	else
 	{
-		printErrors(stack.errors());
+		SourceReferenceFormatter(cout, stack, true, false).printErrorInformation(stack.errors());
 		return {};
 	}
 }
@@ -150,9 +142,14 @@ Allowed options)",
 					cerr << "File not found: " << path << endl;
 					return 1;
 				}
+				catch (NotAFile const&)
+				{
+					cerr << "Not a regular file: " << path << endl;
+					return 1;
+				}
 			}
 		else
-			input = readStandardInput();
+			input = readUntilEnd(cin);
 
 		interpret(input);
 	}

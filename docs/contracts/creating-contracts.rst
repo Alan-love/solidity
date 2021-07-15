@@ -32,10 +32,10 @@ If a contract wants to create another contract, the source code
 (and the binary) of the created contract has to be known to the creator.
 This means that cyclic creation dependencies are impossible.
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.4.22 <0.8.0;
+    pragma solidity >=0.4.22 <0.9.0;
 
 
     contract OwnedToken {

@@ -9,14 +9,14 @@ In particular, we appreciate support in the following areas:
 * Reporting issues.
 * Fixing and responding to `Solidity's GitHub issues
   <https://github.com/ethereum/solidity/issues>`_, especially those tagged as
-  `good first issue <https://github.com/ethereum/solidity/labels/good%20first%20issue>`_ which are
+  `"good first issue" <https://github.com/ethereum/solidity/labels/good%20first%20issue>`_ which are
   meant as introductory issues for external contributors.
 * Improving the documentation.
 * Translating the documentation into more languages.
 * Responding to questions from other users on `StackExchange
   <https://ethereum.stackexchange.com>`_ and the `Solidity Gitter Chat
   <https://gitter.im/ethereum/solidity>`_.
-* Getting involved in the language design process by joining language design calls, proposing language changes or new features and providing feedback.
+* Getting involved in the language design process by proposing language changes or new features in the `Solidity forum <https://forum.soliditylang.org/>`_ and providing feedback.
 
 To get started, you can try :ref:`building-from-source` in order to familiarize
 yourself with the components of Solidity and the build process. Also, it may be
@@ -33,7 +33,7 @@ the team and contributors are working on, you can join our public team calls:
 - Mondays at 3pm CET/CEST.
 - Wednesdays at 2pm CET/CEST.
 
-Both calls take place on `Google Meet <https://meet.google.com/mrq-kbwv-edg>`_.
+Both calls take place on `Jitsi <https://meet.komputing.org/solidity>`_.
 
 How to Report Issues
 ====================
@@ -42,12 +42,11 @@ To report an issue, please use the
 `GitHub issues tracker <https://github.com/ethereum/solidity/issues>`_. When
 reporting issues, please mention the following details:
 
-* Which version of Solidity you are using.
-* What was the source code (if applicable).
-* Which platform are you running on.
-* How to reproduce the issue.
-* What was the result of the issue.
-* What the expected behaviour is.
+* Solidity version.
+* Source code (if applicable).
+* Operating system.
+* Steps to reproduce the issue.
+* Actual vs. expected behaviour.
 
 Reducing the source code that caused the issue to a bare minimum is always
 very helpful and sometimes even clarifies a misunderstanding.
@@ -113,7 +112,7 @@ starting from the current directory. The required file is called ``libevmone.so`
 ``evmone.dll`` on Windows systems and ``libevmone.dylib`` on macOS. If it is not found, tests that
 use it are skipped. These tests are ``libsolididty/semanticTests``, ``libsolidity/GasCosts``,
 ``libsolidity/SolidityEndToEndTest``, part of the soltest suite. To run all tests, download the library from
-`GitHub <https://github.com/ethereum/evmone/releases/tag/v0.4.1>`_
+`GitHub <https://github.com/ethereum/evmone/releases/tag/v0.7.0>`_
 and place it in the project root path or inside the ``deps`` folder.
 
 If the ``libz3`` library is not installed on your system, you should disable the
@@ -150,7 +149,7 @@ See especially:
 
 If you want to debug using GDB, make sure you build differently than the "usual".
 For example, you could run the following command in your ``build`` folder:
-::
+.. code-block:: bash
 
    cmake -DCMAKE_BUILD_TYPE=Debug ..
    make
@@ -172,7 +171,7 @@ The test suite compiles and checks them against the given expectations.
 
 For example: ``./test/libsolidity/syntaxTests/double_stateVariable_declaration.sol``
 
-::
+.. code-block:: solidity
 
     contract test {
         uint256 variable;
@@ -191,7 +190,7 @@ In the above example, the state variable ``variable`` was declared twice, which 
 The ``isoltest`` tool is used for these tests and you can find it under ``./build/test/tools/``. It is an interactive tool which allows
 editing of failing contracts using your preferred text editor. Let's try to break this test by removing the second declaration of ``variable``:
 
-::
+.. code-block:: solidity
 
     contract test {
         uint256 variable;
@@ -201,7 +200,7 @@ editing of failing contracts using your preferred text editor. Let's try to brea
 
 Running ``./build/test/isoltest`` again results in a test failure:
 
-::
+.. code-block:: text
 
     syntaxTests/double_stateVariable_declaration.sol: FAIL
         Contract:
@@ -229,7 +228,7 @@ All of these options apply to the current contract, expect ``quit`` which stops 
 
 Automatically updating the test above changes it to
 
-::
+.. code-block:: solidity
 
     contract test {
         uint256 variable;
@@ -238,7 +237,7 @@ Automatically updating the test above changes it to
 
 and re-run the test. It now passes again:
 
-::
+.. code-block:: text
 
     Re-running test case...
     syntaxTests/double_stateVariable_declaration.sol: OK
@@ -264,7 +263,7 @@ We mainly use `AFL <https://lcamtuf.coredump.cx/afl/>`_ for fuzzing. You need to
 install the AFL packages from your repositories (afl, afl-clang) or build them manually.
 Next, build Solidity (or just the ``solfuzzer`` binary) with AFL as your compiler:
 
-::
+.. code-block:: bash
 
     cd build
     # if needed
@@ -274,7 +273,7 @@ Next, build Solidity (or just the ``solfuzzer`` binary) with AFL as your compile
 
 At this stage you should be able to see a message similar to the following:
 
-::
+.. code-block:: text
 
     Scanning dependencies of target solfuzzer
     [ 98%] Building CXX object test/tools/CMakeFiles/solfuzzer.dir/fuzzer.cpp.o
@@ -285,7 +284,7 @@ At this stage you should be able to see a message similar to the following:
 
 If the instrumentation messages did not appear, try switching the cmake flags pointing to AFL's clang binaries:
 
-::
+.. code-block:: bash
 
     # if previously failed
     make clean
@@ -294,7 +293,7 @@ If the instrumentation messages did not appear, try switching the cmake flags po
 
 Otherwise, upon execution the fuzzer halts with an error saying binary is not instrumented:
 
-::
+.. code-block:: text
 
     afl-fuzz 2.52b by <lcamtuf@google.com>
     ... (truncated messages)
@@ -318,14 +317,14 @@ Next, you need some example source files. This makes it much easier for the fuzz
 to find errors. You can either copy some files from the syntax tests or extract test files
 from the documentation or the other tests:
 
-::
+.. code-block:: bash
 
     mkdir /tmp/test_cases
     cd /tmp/test_cases
     # extract from tests:
     path/to/solidity/scripts/isolate_tests.py path/to/solidity/test/libsolidity/SolidityEndToEndTest.cpp
     # extract from documentation:
-    path/to/solidity/scripts/isolate_tests.py path/to/solidity/docs docs
+    path/to/solidity/scripts/isolate_tests.py path/to/solidity/docs
 
 The AFL documentation states that the corpus (the initial input files) should not be
 too large. The files themselves should not be larger than 1 kB and there should be
@@ -335,7 +334,7 @@ that result in similar behaviour of the binary.
 
 Now run the fuzzer (the ``-m`` extends the size of memory to 60 MB):
 
-::
+.. code-block:: bash
 
     afl-fuzz -m 60 -i /tmp/test_cases -o /tmp/fuzzer_reports -- /path/to/solfuzzer
 
@@ -389,7 +388,8 @@ local slang and references, making your language as clear to all readers as poss
 .. note::
 
     While the official Solidity documentation is written in English, there are community contributed :ref:`translations`
-    in other languages available.
+    in other languages available. Please refer to the `translation guide <https://github.com/solidity-docs/translation-guide>`_
+    for information on how to contribute to the community translations.
 
 Title Case for Headings
 -----------------------
@@ -449,7 +449,7 @@ or ``interface`` using the ``./test/cmdlineTests.sh`` script when you create a P
 ensure they work and pass tests before creating the PR.
 
 Ensure that all code examples begin with a ``pragma`` version that spans the largest where the contract code is valid.
-For example ``pragma solidity >=0.4.0 <0.8.0;``.
+For example ``pragma solidity >=0.4.0 <0.9.0;``.
 
 Running Documentation Tests
 ---------------------------
@@ -460,17 +460,26 @@ needed for documentation and checks for any problems such as broken links or syn
 Solidity Language Design
 ========================
 
-If you want to get involved in the language design process and share your ideas, please join the `solidity-users forum <https://groups.google.com/g/solidity-users>`_,
-where existing properties of the language and proposals for new features can be discussed.
+To actively get involved in the language design process and share your ideas concerning the future of Solidity,
+please join the `Solidity forum <https://forum.soliditylang.org/>`_.
 
-We regularly host language design discussion calls, in which selected topics, issues or feature implementations are debated in detail. The invitation
-to those calls is shared via the aforementioned forum. We are also sharing feedback surveys and other language design relevant content in this forum.
+The Solidity forum serves as the place to propose and discuss new language features and their implementation in
+the early stages of ideation or modifications of existing features.
+
+As soon as proposals get more tangible, their
+implementation will also be discussed in the `Solidity GitHub repository <https://github.com/ethereum/solidity>`_
+in the form of issues.
+
+In addition to the forum and issue discussions, we regularly host language design discussion calls in which selected
+topics, issues or feature implementations are debated in detail. The invitation to those calls is shared via the forum.
+
+We are also sharing feedback surveys and other content that is relevant to language design in the forum.
+
+If you want to know where the team is standing in terms or implementing new features, you can follow the implementation status in the `Solidity Github project <https://github.com/ethereum/solidity/projects/43>`_.
+Issues in the design backlog need further specification and will either be discussed in a language design call or in a regular team call. You can
+see the upcoming changes for the next breaking release by changing from the default branch (`develop`) to the `breaking branch <https://github.com/ethereum/solidity/tree/breaking>`_.
 
 For ad-hoc cases and questions you can reach out to us via the `Solidity-dev Gitter channel <https://gitter.im/ethereum/solidity-dev>`_, a
 dedicated chatroom for conversations around the Solidity compiler and language development.
-
-You can follow the implementation status of new features in the `Solidity Github project <https://github.com/ethereum/solidity/projects/43>`_.
-Issues in the design backlog need further specification and will either be discussed in a language design call or in a regular team call. You can
-see the upcoming changes for the next breaking release by changing from the default branch (`develop`) to the `breaking branch <https://github.com/ethereum/solidity/tree/breaking>`_.
 
 We are happy to hear your thoughts on how we can improve the language design process to be even more collaborative and transparent.

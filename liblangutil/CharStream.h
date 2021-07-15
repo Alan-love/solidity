@@ -45,9 +45,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 /**
- * @author Christian <c@ethdev.com>
- * @date 2014
- * Solidity scanner.
+ * Character stream / input file.
  */
 
 #pragma once
@@ -60,6 +58,8 @@
 namespace solidity::langutil
 {
 
+struct SourceLocation;
+
 /**
  * Bidirectional stream of characters.
  *
@@ -69,8 +69,8 @@ class CharStream
 {
 public:
 	CharStream() = default;
-	explicit CharStream(std::string  _source, std::string  name):
-		m_source(std::move(_source)), m_name(std::move(name)) {}
+	CharStream(std::string _source, std::string _name):
+		m_source(std::move(_source)), m_name(std::move(_name)) {}
 
 	size_t position() const { return m_position; }
 	bool isPastEndOfInput(size_t _charsForward = 0) const { return (m_position + _charsForward) >= m_source.size(); }
@@ -90,6 +90,8 @@ public:
 	std::string const& source() const noexcept { return m_source; }
 	std::string const& name() const noexcept { return m_name; }
 
+	size_t size() const { return m_source.size(); }
+
 	///@{
 	///@name Error printing helper functions
 	/// Functions that help pretty-printing parse errors
@@ -97,6 +99,24 @@ public:
 	std::string lineAtPosition(int _position) const;
 	std::tuple<int, int> translatePositionToLineColumn(int _position) const;
 	///@}
+
+	/// Tests whether or not given octet sequence is present at the current position in stream.
+	/// @returns true if the sequence could be found, false otherwise.
+	bool prefixMatch(std::string_view _sequence)
+	{
+		if (isPastEndOfInput(_sequence.size()))
+			return false;
+
+		for (size_t i = 0; i < _sequence.size(); ++i)
+			if (_sequence[i] != get(i))
+				return false;
+
+		return true;
+	}
+
+	/// @returns the substring of the source that the source location references.
+	/// Returns an empty string view if the source location does not `hasText()`.
+	std::string_view text(SourceLocation const& _location) const;
 
 private:
 	std::string m_source;

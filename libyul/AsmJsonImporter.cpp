@@ -45,18 +45,16 @@ SourceLocation const AsmJsonImporter::createSourceLocation(Json::Value const& _n
 {
 	yulAssert(member(_node, "src").isString(), "'src' must be a string");
 
-	return solidity::langutil::parseSourceLocation(_node["src"].asString(), m_sourceName);
+	return solidity::langutil::parseSourceLocation(_node["src"].asString(), m_sourceNames);
 }
 
 template <class T>
 T AsmJsonImporter::createAsmNode(Json::Value const& _node)
 {
 	T r;
-	r.location = createSourceLocation(_node);
-	yulAssert(
-		r.location.source && 0 <= r.location.start && r.location.start <= r.location.end,
-		"Invalid source location in Asm AST"
-	);
+	SourceLocation location = createSourceLocation(_node);
+	yulAssert(location.hasText(), "Invalid source location in Asm AST");
+	r.debugData = DebugData::create(location);
 	return r;
 }
 
@@ -157,7 +155,12 @@ Literal AsmJsonImporter::createLiteral(Json::Value const& _node)
 	auto lit = createAsmNode<Literal>(_node);
 	string kind = member(_node, "kind").asString();
 
-	lit.value = YulString{member(_node, "value").asString()};
+	solAssert(member(_node, "hexValue").isString() || member(_node, "value").isString(), "");
+	if (_node.isMember("hexValue"))
+		lit.value = YulString{util::asString(util::fromHex(member(_node, "hexValue").asString()))};
+	else
+		lit.value = YulString{member(_node, "value").asString()};
+
 	lit.type= YulString{member(_node, "type").asString()};
 
 	if (kind == "number")

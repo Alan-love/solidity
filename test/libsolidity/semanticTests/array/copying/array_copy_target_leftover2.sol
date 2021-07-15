@@ -17,6 +17,11 @@ contract c {
         r3 = data2[5];
     }
 }
-
+// ====
+// compileToEwasm: also
+// compileViaYul: also
 // ----
 // test() -> 0x04000000000000000000000000000000000000000000000000, 0x0, 0x0
+// gas irOptimized: 93855
+// gas legacy: 97451
+// gas legacyOptimized: 94200

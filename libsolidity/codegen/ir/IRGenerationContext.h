@@ -68,11 +68,13 @@ public:
 	IRGenerationContext(
 		langutil::EVMVersion _evmVersion,
 		RevertStrings _revertStrings,
-		OptimiserSettings _optimiserSettings
+		OptimiserSettings _optimiserSettings,
+		std::map<std::string, unsigned> _sourceIndices
 	):
 		m_evmVersion(_evmVersion),
 		m_revertStrings(_revertStrings),
-		m_optimiserSettings(std::move(_optimiserSettings))
+		m_optimiserSettings(std::move(_optimiserSettings)),
+		m_sourceIndices(std::move(_sourceIndices))
 	{}
 
 	MultiUseYulFunctionCollector& functionCollector() { return m_functions; }
@@ -97,6 +99,7 @@ public:
 	IRVariable const& addLocalVariable(VariableDeclaration const& _varDecl);
 	bool isLocalVariable(VariableDeclaration const& _varDecl) const { return m_localVariables.count(&_varDecl); }
 	IRVariable const& localVariable(VariableDeclaration const& _varDecl);
+	void resetLocalVariables();
 
 	/// Registers an immutable variable of the contract.
 	/// Should only be called at construction time.
@@ -137,11 +140,10 @@ public:
 
 	langutil::EVMVersion evmVersion() const { return m_evmVersion; }
 
-	ABIFunctions abiFunctions();
+	void setArithmetic(Arithmetic _value) { m_arithmetic = _value; }
+	Arithmetic arithmetic() const { return m_arithmetic; }
 
-	/// @returns code that stores @param _message for revert reason
-	/// if m_revertStrings is debug.
-	std::string revertReasonIfDebug(std::string const& _message = "");
+	ABIFunctions abiFunctions();
 
 	RevertStrings revertStrings() const { return m_revertStrings; }
 
@@ -150,10 +152,21 @@ public:
 	bool inlineAssemblySeen() const { return m_inlineAssemblySeen; }
 	void setInlineAssemblySeen() { m_inlineAssemblySeen = true; }
 
+	/// @returns the runtime ID to be used for the function in the dispatch routine
+	/// and for internal function pointers.
+	/// @param _requirePresent if false, generates a new ID if not yet done.
+	uint64_t internalFunctionID(FunctionDefinition const& _function, bool _requirePresent);
+	/// Copies the internal function IDs from the @a _other. For use in transferring
+	/// function IDs from constructor code to deployed code.
+	void copyFunctionIDsFrom(IRGenerationContext const& _other);
+
+	std::map<std::string, unsigned> const& sourceIndices() const { return m_sourceIndices; }
+
 private:
 	langutil::EVMVersion m_evmVersion;
 	RevertStrings m_revertStrings;
 	OptimiserSettings m_optimiserSettings;
+	std::map<std::string, unsigned> m_sourceIndices;
 	ContractDefinition const* m_mostDerivedContract = nullptr;
 	std::map<VariableDeclaration const*, IRVariable> m_localVariables;
 	/// Memory offsets reserved for the values of immutable variables during contract creation.
@@ -166,6 +179,8 @@ private:
 	std::map<VariableDeclaration const*, std::pair<u256, unsigned>> m_stateVariables;
 	MultiUseYulFunctionCollector m_functions;
 	size_t m_varCounter = 0;
+	/// Whether to use checked or wrapping arithmetic.
+	Arithmetic m_arithmetic = Arithmetic::Checked;
 
 	/// Flag indicating whether any inline assembly block was seen.
 	bool m_inlineAssemblySeen = false;
@@ -184,6 +199,8 @@ private:
 	/// the code contains a call via a pointer even though a specific function is never assigned to it.
 	/// It will fail at runtime but the code must still compile.
 	InternalDispatchMap m_internalDispatchMap;
+	/// Map used by @a internalFunctionID.
+	std::map<int64_t, uint64_t> m_functionIDs;
 
 	std::set<ContractDefinition const*, ASTNode::CompareByID> m_subObjects;
 };

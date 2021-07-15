@@ -18,6 +18,8 @@
 
 #include <test/libyul/ObjectCompilerTest.h>
 
+#include <test/libsolidity/util/SoltestErrors.h>
+
 #include <libsolutil/AnsiColorized.h>
 
 #include <libyul/AssemblyStack.h>
@@ -43,7 +45,16 @@ ObjectCompilerTest::ObjectCompilerTest(string const& _filename):
 	TestCase(_filename)
 {
 	m_source = m_reader.source();
-	m_optimize = m_reader.boolSetting("optimize", false);
+	m_optimisationPreset = m_reader.enumSetting<OptimisationPreset>(
+		"optimizationPreset",
+		{
+			{"none", OptimisationPreset::None},
+			{"minimal", OptimisationPreset::Minimal},
+			{"standard", OptimisationPreset::Standard},
+			{"full", OptimisationPreset::Full},
+		},
+		"minimal"
+	);
 	m_wasm = m_reader.boolSetting("wasm", false);
 	m_expectation = m_reader.simpleExpectations();
 }
@@ -53,12 +64,13 @@ TestCase::TestResult ObjectCompilerTest::run(ostream& _stream, string const& _li
 	AssemblyStack stack(
 		EVMVersion(),
 		m_wasm ? AssemblyStack::Language::Ewasm : AssemblyStack::Language::StrictAssembly,
-		m_optimize ? OptimiserSettings::full() : OptimiserSettings::minimal()
+		OptimiserSettings::preset(m_optimisationPreset)
 	);
 	if (!stack.parseAndAnalyze("source", m_source))
 	{
 		AnsiColorized(_stream, _formatted, {formatting::BOLD, formatting::RED}) << _linePrefix << "Error parsing source." << endl;
-		printErrors(_stream, stack.errors());
+		SourceReferenceFormatter{_stream, stack, true, false}
+			.printErrorInformation(stack.errors());
 		return TestResult::FatalError;
 	}
 	stack.optimize();
@@ -92,12 +104,4 @@ TestCase::TestResult ObjectCompilerTest::run(ostream& _stream, string const& _li
 	}
 
 	return checkResult(_stream, _linePrefix, _formatted);
-}
-
-void ObjectCompilerTest::printErrors(ostream& _stream, ErrorList const& _errors)
-{
-	SourceReferenceFormatter formatter(_stream);
-
-	for (auto const& error: _errors)
-		formatter.printErrorInformation(*error);
 }

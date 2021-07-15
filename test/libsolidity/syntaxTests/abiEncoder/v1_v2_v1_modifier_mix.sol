@@ -1,4 +1,5 @@
 ==== Source: C ====
+pragma abicoder v1;
 import "X";
 import "V1A";
 import "V2A";
@@ -14,6 +15,7 @@ contract C is V1A, V2A, V1B {
     }
 }
 ==== Source: V1A ====
+pragma abicoder v1;
 import "X";
 
 contract V1A {
@@ -22,6 +24,7 @@ contract V1A {
     }
 }
 ==== Source: V1B ====
+pragma abicoder v1;
 import "X";
 
 contract V1B {
@@ -35,7 +38,7 @@ import "X";
 
 contract V2A {
     modifier modV2A() {
-        X(0x00).get();
+        X(address(0x00)).get();
         _;
     }
 }

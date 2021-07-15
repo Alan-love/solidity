@@ -9,7 +9,7 @@ Ether Units
 
 A literal number can take a suffix of ``wei``, ``gwei`` or ``ether`` to specify a subdenomination of Ether, where Ether numbers without a postfix are assumed to be Wei.
 
-::
+.. code-block:: solidity
 
     assert(1 wei == 1);
     assert(1 gwei == 1e9);
@@ -45,7 +45,9 @@ library has to be updated by an external oracle.
     The suffix ``years`` has been removed in version 0.5.0 due to the reasons above.
 
 These suffixes cannot be applied to variables. For example, if you want to
-interpret a function parameter in days, you can in the following way::
+interpret a function parameter in days, you can in the following way:
+
+.. code-block:: solidity
 
     function f(uint start, uint daysAfter) public {
         if (block.timestamp >= start + daysAfter * 1 days) {
@@ -68,7 +70,8 @@ or are general-use utility functions.
 Block and Transaction Properties
 --------------------------------
 
-- ``blockhash(uint blockNumber) returns (bytes32)``: hash of the given block - only works for 256 most recent, excluding current, blocks
+- ``blockhash(uint blockNumber) returns (bytes32)``: hash of the given block when ``blocknumber`` is one of the 256 most recent blocks; otherwise returns zero
+- ``block.chainid`` (``uint``): current chain id
 - ``block.coinbase`` (``address payable``): current block miner's address
 - ``block.difficulty`` (``uint``): current block difficulty
 - ``block.gaslimit`` (``uint``): current block gaslimit
@@ -76,11 +79,11 @@ Block and Transaction Properties
 - ``block.timestamp`` (``uint``): current block timestamp as seconds since unix epoch
 - ``gasleft() returns (uint256)``: remaining gas
 - ``msg.data`` (``bytes calldata``): complete calldata
-- ``msg.sender`` (``address payable``): sender of the message (current call)
+- ``msg.sender`` (``address``): sender of the message (current call)
 - ``msg.sig`` (``bytes4``): first four bytes of the calldata (i.e. function identifier)
 - ``msg.value`` (``uint``): number of wei sent with the message
 - ``tx.gasprice`` (``uint``): gas price of the transaction
-- ``tx.origin`` (``address payable``): sender of the transaction (full call chain)
+- ``tx.origin`` (``address``): sender of the transaction (full call chain)
 
 .. note::
     The values of all members of ``msg``, including ``msg.sender`` and
@@ -135,6 +138,13 @@ ABI Encoding and Decoding Functions
 See the documentation about the :ref:`ABI <ABI>` and the
 :ref:`tightly packed encoding <abi_packed_mode>` for details about the encoding.
 
+.. index:: bytes members
+
+Members of bytes
+----------------
+
+- ``bytes.concat(...) returns (bytes memory)``: :ref:`Concatenates variable number of bytes and bytes1, ..., bytes32 arguments to one byte array<bytes-concat>`
+
 .. index:: assert, revert, require
 
 Error Handling
@@ -144,7 +154,7 @@ See the dedicated section on :ref:`assert and require<assert-and-require>` for
 more details on error handling and when to use which function.
 
 ``assert(bool condition)``
-    causes an invalid opcode and thus state change reversion if the condition is not met - to be used for internal errors.
+    causes a Panic error and thus state change reversion if the condition is not met - to be used for internal errors.
 
 ``require(bool condition)``
     reverts if the condition is not met - to be used for errors in inputs or external components.
@@ -211,7 +221,7 @@ Mathematical and Cryptographic Functions
 
     When running ``sha256``, ``ripemd160`` or ``ecrecover`` on a *private blockchain*, you might encounter Out-of-Gas. This is because these functions are implemented as "precompiled contracts" and only really exist after they receive the first message (although their contract code is hardcoded). Messages to non-existing contracts are more expensive and thus the execution might run into an Out-of-Gas error. A workaround for this problem is to first send Wei (1 for example) to each of the contracts before you use them in your actual contracts. This is not an issue on the main or test net.
 
-.. index:: balance, send, transfer, call, callcode, delegatecall, staticcall
+.. index:: balance, codehash, send, transfer, call, callcode, delegatecall, staticcall
 
 .. _address_related:
 
@@ -220,6 +230,12 @@ Members of Address Types
 
 ``<address>.balance`` (``uint256``)
     balance of the :ref:`address` in Wei
+
+``<address>.code`` (``bytes memory``)
+    code at the :ref:`address` (can be empty)
+
+``<address>.codehash`` (``bytes32``)
+    the codehash of the :ref:`address`
 
 ``<address payable>.transfer(uint256 amount)``
     send given amount of Wei to :ref:`address`, reverts on failure, forwards 2300 gas stipend, not adjustable
@@ -247,6 +263,16 @@ For more information, see the section on :ref:`address`.
     (this can always be forced by the caller) and it also fails if the recipient runs out of gas. So in order
     to make safe Ether transfers, always check the return value of ``send``, use ``transfer`` or even better:
     Use a pattern where the recipient withdraws the money.
+
+.. warning::
+    Due to the fact that the EVM considers a call to a non-existing contract to always succeed,
+    Solidity includes an extra check using the ``extcodesize`` opcode when performing external calls.
+    This ensures that the contract that is about to be called either actually exists (it contains code)
+    or an exception is raised.
+
+    The low-level calls which operate on addresses rather than contract instances (i.e. ``.call()``,
+    ``.delegatecall()``, ``.staticcall()``, ``.send()`` and ``.transfer()``) **do not** include this
+    check, which makes them cheaper in terms of gas but also less safe.
 
 .. note::
    Prior to version 0.5.0, Solidity allowed address members to be accessed by a contract instance, for example ``this.balance``.

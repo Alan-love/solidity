@@ -21,24 +21,54 @@
  * Solidity inline assembly parser.
  */
 
-#include <libyul/AsmParser.h>
 #include <libyul/AST.h>
+#include <libyul/AsmParser.h>
 #include <libyul/Exceptions.h>
 #include <liblangutil/Scanner.h>
 #include <liblangutil/ErrorReporter.h>
 #include <libsolutil/Common.h>
 #include <libsolutil/Visitor.h>
 
+#include <range/v3/view/subrange.hpp>
+
 #include <boost/algorithm/string.hpp>
 
-#include <cctype>
 #include <algorithm>
+#include <regex>
 
 using namespace std;
 using namespace solidity;
 using namespace solidity::util;
 using namespace solidity::langutil;
 using namespace solidity::yul;
+
+namespace
+{
+
+[[nodiscard]]
+shared_ptr<DebugData const> updateLocationEndFrom(
+	shared_ptr<DebugData const> const& _debugData,
+	langutil::SourceLocation const& _location
+)
+{
+	SourceLocation updatedLocation = _debugData->location;
+	updatedLocation.end = _location.end;
+	return make_shared<DebugData const>(updatedLocation);
+}
+
+optional<int> toInt(string const& _value)
+{
+	try
+	{
+		return stoi(_value);
+	}
+	catch (...)
+	{
+		return nullopt;
+	}
+}
+
+}
 
 unique_ptr<Block> Parser::parse(std::shared_ptr<Scanner> const& _scanner, bool _reuseScanner)
 {
@@ -50,6 +80,8 @@ unique_ptr<Block> Parser::parse(std::shared_ptr<Scanner> const& _scanner, bool _
 	try
 	{
 		m_scanner = _scanner;
+		if (m_sourceNames)
+			fetchSourceLocationFromComment();
 		auto block = make_unique<Block>(parseBlock());
 		if (!_reuseScanner)
 			expectToken(Token::EOS);
@@ -63,6 +95,55 @@ unique_ptr<Block> Parser::parse(std::shared_ptr<Scanner> const& _scanner, bool _
 	return nullptr;
 }
 
+langutil::Token Parser::advance()
+{
+	auto const token = ParserBase::advance();
+	if (m_useSourceLocationFrom == UseSourceLocationFrom::Comments)
+		fetchSourceLocationFromComment();
+	return token;
+}
+
+void Parser::fetchSourceLocationFromComment()
+{
+	solAssert(m_sourceNames.has_value(), "");
+
+	if (m_scanner->currentCommentLiteral().empty())
+		return;
+
+	static regex const lineRE = std::regex(
+		R"~~~((^|\s*)@src\s+(-1|\d+):(-1|\d+):(-1|\d+)(\s+|$))~~~",
+		std::regex_constants::ECMAScript | std::regex_constants::optimize
+	);
+
+	string const text = m_scanner->currentCommentLiteral();
+	auto from = sregex_iterator(text.begin(), text.end(), lineRE);
+	auto to = sregex_iterator();
+
+	for (auto const& matchResult: ranges::make_subrange(from, to))
+	{
+		solAssert(matchResult.size() == 6, "");
+
+		auto const sourceIndex = toInt(matchResult[2].str());
+		auto const start = toInt(matchResult[3].str());
+		auto const end = toInt(matchResult[4].str());
+
+		auto const commentLocation = m_scanner->currentCommentLocation();
+		m_debugDataOverride = DebugData::create();
+		if (!sourceIndex || !start || !end)
+			m_errorReporter.syntaxError(6367_error, commentLocation, "Invalid value in source location mapping. Could not parse location specification.");
+		else if (sourceIndex == -1)
+			m_debugDataOverride = DebugData::create(SourceLocation{*start, *end, nullptr});
+		else if (!(sourceIndex >= 0 && m_sourceNames->count(static_cast<unsigned>(*sourceIndex))))
+			m_errorReporter.syntaxError(2674_error, commentLocation, "Invalid source mapping. Source index not defined via @use-src.");
+		else
+		{
+			shared_ptr<string const> sourceName = m_sourceNames->at(static_cast<unsigned>(*sourceIndex));
+			solAssert(sourceName, "");
+			m_debugDataOverride = DebugData::create(SourceLocation{*start, *end, move(sourceName)});
+		}
+	}
+}
+
 Block Parser::parseBlock()
 {
 	RecursionGuard recursionGuard(*this);
@@ -70,7 +151,8 @@ Block Parser::parseBlock()
 	expectToken(Token::LBrace);
 	while (currentToken() != Token::RBrace)
 		block.statements.emplace_back(parseStatement());
-	block.location.end = currentLocation().end;
+	if (m_useSourceLocationFrom == UseSourceLocationFrom::Scanner)
+		block.debugData = updateLocationEndFrom(block.debugData, currentLocation());
 	advance();
 	return block;
 }
@@ -92,6 +174,8 @@ Statement Parser::parseStatement()
 		advance();
 		_if.condition = make_unique<Expression>(parseExpression());
 		_if.body = parseBlock();
+		if (m_useSourceLocationFrom == UseSourceLocationFrom::Scanner)
+			_if.debugData = updateLocationEndFrom(_if.debugData, _if.body.debugData->location);
 		return Statement{move(_if)};
 	}
 	case Token::Switch:
@@ -109,7 +193,8 @@ Statement Parser::parseStatement()
 			fatalParserError(4904_error, "Case not allowed after default case.");
 		if (_switch.cases.empty())
 			fatalParserError(2418_error, "Switch statement without any cases.");
-		_switch.location.end = _switch.cases.back().body.location.end;
+		if (m_useSourceLocationFrom == UseSourceLocationFrom::Scanner)
+			_switch.debugData = updateLocationEndFrom(_switch.debugData, _switch.cases.back().body.debugData->location);
 		return Statement{move(_switch)};
 	}
 	case Token::For:
@@ -150,13 +235,13 @@ Statement Parser::parseStatement()
 	case Token::LParen:
 	{
 		Expression expr = parseCall(std::move(elementary));
-		return ExpressionStatement{locationOf(expr), move(expr)};
+		return ExpressionStatement{debugDataOf(expr), move(expr)};
 	}
 	case Token::Comma:
 	case Token::AssemblyAssign:
 	{
 		Assignment assignment;
-		assignment.location = locationOf(elementary);
+		assignment.debugData = debugDataOf(elementary);
 
 		while (true)
 		{
@@ -191,7 +276,8 @@ Statement Parser::parseStatement()
 		expectToken(Token::AssemblyAssign);
 
 		assignment.value = make_unique<Expression>(parseExpression());
-		assignment.location.end = locationOf(*assignment.value).end;
+		if (m_useSourceLocationFrom == UseSourceLocationFrom::Scanner)
+			assignment.debugData = updateLocationEndFrom(assignment.debugData, locationOf(*assignment.value));
 
 		return Statement{move(assignment)};
 	}
@@ -221,7 +307,8 @@ Case Parser::parseCase()
 	else
 		yulAssert(false, "Case or default case expected.");
 	_case.body = parseBlock();
-	_case.location.end = _case.body.location.end;
+	if (m_useSourceLocationFrom == UseSourceLocationFrom::Scanner)
+		_case.debugData = updateLocationEndFrom(_case.debugData, _case.body.debugData->location);
 	return _case;
 }
 
@@ -241,7 +328,8 @@ ForLoop Parser::parseForLoop()
 	forLoop.post = parseBlock();
 	m_currentForLoopComponent = ForLoopComponent::ForLoopBody;
 	forLoop.body = parseBlock();
-	forLoop.location.end = forLoop.body.location.end;
+	if (m_useSourceLocationFrom == UseSourceLocationFrom::Scanner)
+		forLoop.debugData = updateLocationEndFrom(forLoop.debugData, forLoop.body.debugData->location);
 
 	m_currentForLoopComponent = outerForLoopComponent;
 
@@ -261,7 +349,7 @@ Expression Parser::parseExpression()
 			if (m_dialect.builtin(_identifier.name))
 				fatalParserError(
 					7104_error,
-					_identifier.location,
+					_identifier.debugData->location,
 					"Builtin function \"" + _identifier.name.str() + "\" must be called."
 				);
 			return move(_identifier);
@@ -280,11 +368,12 @@ variant<Literal, Identifier> Parser::parseLiteralOrIdentifier()
 	{
 	case Token::Identifier:
 	{
-		Identifier identifier{currentLocation(), YulString{currentLiteral()}};
+		Identifier identifier{createDebugData(), YulString{currentLiteral()}};
 		advance();
 		return identifier;
 	}
 	case Token::StringLiteral:
+	case Token::HexStringLiteral:
 	case Token::Number:
 	case Token::TrueLiteral:
 	case Token::FalseLiteral:
@@ -293,6 +382,7 @@ variant<Literal, Identifier> Parser::parseLiteralOrIdentifier()
 		switch (currentToken())
 		{
 		case Token::StringLiteral:
+		case Token::HexStringLiteral:
 			kind = LiteralKind::String;
 			break;
 		case Token::Number:
@@ -309,7 +399,7 @@ variant<Literal, Identifier> Parser::parseLiteralOrIdentifier()
 		}
 
 		Literal literal{
-			currentLocation(),
+			createDebugData(),
 			kind,
 			YulString{currentLiteral()},
 			kind == LiteralKind::Boolean ? m_dialect.boolType : m_dialect.defaultType
@@ -318,14 +408,15 @@ variant<Literal, Identifier> Parser::parseLiteralOrIdentifier()
 		if (currentToken() == Token::Colon)
 		{
 			expectToken(Token::Colon);
-			literal.location.end = currentLocation().end;
+			if (m_useSourceLocationFrom == UseSourceLocationFrom::Scanner)
+				literal.debugData = updateLocationEndFrom(literal.debugData, currentLocation());
 			literal.type = expectAsmIdentifier();
 		}
 
 		return literal;
 	}
-	case Token::HexStringLiteral:
-		fatalParserError(3772_error, "Hex literals are not valid in this context.");
+	case Token::Illegal:
+		fatalParserError(1465_error, "Illegal token: " + to_string(m_scanner->currentError()));
 		break;
 	default:
 		fatalParserError(1856_error, "Literal or identifier expected.");
@@ -350,10 +441,12 @@ VariableDeclaration Parser::parseVariableDeclaration()
 	{
 		expectToken(Token::AssemblyAssign);
 		varDecl.value = make_unique<Expression>(parseExpression());
-		varDecl.location.end = locationOf(*varDecl.value).end;
+		if (m_useSourceLocationFrom == UseSourceLocationFrom::Scanner)
+			varDecl.debugData = updateLocationEndFrom(varDecl.debugData, locationOf(*varDecl.value));
 	}
-	else
-		varDecl.location.end = varDecl.variables.back().location.end;
+	else if (m_useSourceLocationFrom == UseSourceLocationFrom::Scanner)
+		varDecl.debugData = updateLocationEndFrom(varDecl.debugData, varDecl.variables.back().debugData->location);
+
 	return varDecl;
 }
 
@@ -398,7 +491,8 @@ FunctionDefinition Parser::parseFunctionDefinition()
 	m_insideFunction = true;
 	funDef.body = parseBlock();
 	m_insideFunction = preInsideFunction;
-	funDef.location.end = funDef.body.location.end;
+	if (m_useSourceLocationFrom == UseSourceLocationFrom::Scanner)
+		funDef.debugData = updateLocationEndFrom(funDef.debugData, funDef.body.debugData->location);
 
 	m_currentForLoopComponent = outerForLoopComponent;
 	return funDef;
@@ -413,7 +507,7 @@ FunctionCall Parser::parseCall(variant<Literal, Identifier>&& _initialOp)
 
 	FunctionCall ret;
 	ret.functionName = std::move(std::get<Identifier>(_initialOp));
-	ret.location = ret.functionName.location;
+	ret.debugData = ret.functionName.debugData;
 
 	expectToken(Token::LParen);
 	if (currentToken() != Token::RParen)
@@ -425,7 +519,8 @@ FunctionCall Parser::parseCall(variant<Literal, Identifier>&& _initialOp)
 			ret.arguments.emplace_back(parseExpression());
 		}
 	}
-	ret.location.end = currentLocation().end;
+	if (m_useSourceLocationFrom == UseSourceLocationFrom::Scanner)
+		ret.debugData = updateLocationEndFrom(ret.debugData, currentLocation());
 	expectToken(Token::RParen);
 	return ret;
 }
@@ -438,7 +533,8 @@ TypedName Parser::parseTypedName()
 	if (currentToken() == Token::Colon)
 	{
 		expectToken(Token::Colon);
-		typedName.location.end = currentLocation().end;
+		if (m_useSourceLocationFrom == UseSourceLocationFrom::Scanner)
+			typedName.debugData = updateLocationEndFrom(typedName.debugData, currentLocation());
 		typedName.type = expectAsmIdentifier();
 	}
 	else

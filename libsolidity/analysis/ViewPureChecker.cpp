@@ -69,7 +69,7 @@ public:
 		if (yul::EVMDialect const* dialect = dynamic_cast<decltype(dialect)>(&m_dialect))
 			if (yul::BuiltinFunctionForEVM const* fun = dialect->builtin(_funCall.functionName.name))
 				if (fun->instruction)
-					checkInstruction(_funCall.location, *fun->instruction);
+					checkInstruction(_funCall.debugData->location, *fun->instruction);
 
 		for (auto const& arg: _funCall.arguments)
 			std::visit(*this, arg);
@@ -200,8 +200,8 @@ void ViewPureChecker::endVisit(Identifier const& _identifier)
 		switch (magicVar->type()->category())
 		{
 		case Type::Category::Contract:
-			solAssert(_identifier.name() == "this" || _identifier.name() == "super", "");
-			if (!dynamic_cast<ContractType const&>(*magicVar->type()).isSuper())
+			solAssert(_identifier.name() == "this", "");
+			if (dynamic_cast<ContractType const*>(magicVar->type()))
 				// reads the address
 				mutability = StateMutability::View;
 			break;
@@ -356,7 +356,7 @@ void ViewPureChecker::endVisit(MemberAccess const& _memberAccess)
 	switch (_memberAccess.expression().annotation().type->category())
 	{
 	case Type::Category::Address:
-		if (member == "balance")
+		if (member == "balance" || member == "code" || member == "codehash")
 			mutability = StateMutability::View;
 		break;
 	case Type::Category::Magic:
@@ -368,7 +368,6 @@ void ViewPureChecker::endVisit(MemberAccess const& _memberAccess)
 			{MagicType::Kind::ABI, "encodePacked"},
 			{MagicType::Kind::ABI, "encodeWithSelector"},
 			{MagicType::Kind::ABI, "encodeWithSignature"},
-			{MagicType::Kind::Block, "blockhash"},
 			{MagicType::Kind::Message, "data"},
 			{MagicType::Kind::Message, "sig"},
 			{MagicType::Kind::MetaType, "creationCode"},
@@ -438,13 +437,11 @@ void ViewPureChecker::endVisit(IndexRangeAccess const& _indexRangeAccess)
 
 void ViewPureChecker::endVisit(ModifierInvocation const& _modifier)
 {
-	solAssert(_modifier.name(), "");
-	if (ModifierDefinition const* mod = dynamic_cast<decltype(mod)>(_modifier.name()->annotation().referencedDeclaration))
+	if (ModifierDefinition const* mod = dynamic_cast<decltype(mod)>(_modifier.name().annotation().referencedDeclaration))
 	{
 		MutabilityAndLocation const& mutAndLocation = modifierMutability(*mod);
 		reportMutability(mutAndLocation.mutability, _modifier.location(), mutAndLocation.location);
 	}
 	else
-		solAssert(dynamic_cast<ContractDefinition const*>(_modifier.name()->annotation().referencedDeclaration), "");
+		solAssert(dynamic_cast<ContractDefinition const*>(_modifier.name().annotation().referencedDeclaration), "");
 }
-

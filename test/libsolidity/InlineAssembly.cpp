@@ -81,7 +81,7 @@ std::optional<Error> parseAndReturnFirstError(
 		{
 			string errors;
 			for (auto const& err: stack.errors())
-				errors += SourceReferenceFormatter::formatErrorInformation(*err);
+				errors += SourceReferenceFormatter::formatErrorInformation(*err, stack);
 			BOOST_FAIL("Found more than one error:\n" + errors);
 		}
 		error = e;
@@ -107,8 +107,7 @@ bool successParse(
 bool successAssemble(string const& _source, bool _allowWarnings = true, AssemblyStack::Language _language = AssemblyStack::Language::Assembly)
 {
 	return
-		successParse(_source, true, _allowWarnings, _language, AssemblyStack::Machine::EVM) &&
-		successParse(_source, true, _allowWarnings, _language, AssemblyStack::Machine::EVM15);
+		successParse(_source, true, _allowWarnings, _language, AssemblyStack::Machine::EVM);
 }
 
 Error expectError(
@@ -273,8 +272,8 @@ BOOST_AUTO_TEST_CASE(oversize_string_literals)
 
 BOOST_AUTO_TEST_CASE(magic_variables)
 {
-	CHECK_ASSEMBLE_ERROR("{ pop(this) }", DeclarationError, "Identifier not found");
-	CHECK_ASSEMBLE_ERROR("{ pop(ecrecover) }", DeclarationError, "Identifier not found");
+	CHECK_ASSEMBLE_ERROR("{ pop(this) }", DeclarationError, "Identifier \"this\" not found");
+	CHECK_ASSEMBLE_ERROR("{ pop(ecrecover) }", DeclarationError, "Identifier \"ecrecover\" not found");
 	BOOST_CHECK(successAssemble("{ let ecrecover := 1 pop(ecrecover) }"));
 }
 
@@ -357,12 +356,6 @@ BOOST_AUTO_TEST_CASE(shift_constantinople_warning)
 	CHECK_PARSE_WARNING("{ shl(10, 32) }", TypeError, "The \"shl\" instruction is only available for Constantinople-compatible VMs");
 	CHECK_PARSE_WARNING("{ shr(10, 32) }", TypeError, "The \"shr\" instruction is only available for Constantinople-compatible VMs");
 	CHECK_PARSE_WARNING("{ sar(10, 32) }", TypeError, "The \"sar\" instruction is only available for Constantinople-compatible VMs");
-}
-
-BOOST_AUTO_TEST_CASE(jump_error)
-{
-	CHECK_PARSE_WARNING("{ jump(44) }", DeclarationError, "Function not found.");
-	CHECK_PARSE_WARNING("{ jumpi(44, 2) }", DeclarationError, "Function not found.");
 }
 
 BOOST_AUTO_TEST_SUITE_END() // }}}

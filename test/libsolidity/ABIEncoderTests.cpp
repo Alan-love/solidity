@@ -48,17 +48,6 @@ namespace solidity::frontend::test
 
 BOOST_FIXTURE_TEST_SUITE(ABIEncoderTest, SolidityExecutionFramework)
 
-BOOST_AUTO_TEST_CASE(both_encoders_macro)
-{
-	// This tests that the "both encoders macro" at least runs twice and
-	// modifies the source.
-	string sourceCode;
-	int runs = 0;
-	BOTH_ENCODERS(runs++;)
-	BOOST_CHECK(sourceCode == NewEncoderPragma);
-	BOOST_CHECK_EQUAL(runs, 2);
-}
-
 BOOST_AUTO_TEST_CASE(value_types)
 {
 	string sourceCode = R"(
@@ -70,7 +59,7 @@ BOOST_AUTO_TEST_CASE(value_types)
 				assembly { b := 7 }
 				C c;
 				assembly { c := sub(0, 5) }
-				emit E(10, uint16(uint256(-2)), uint24(0x12121212), int24(int256(-1)), bytes3(x), b, c);
+				emit E(10, uint16(type(uint).max - 1), uint24(uint(0x12121212)), int24(int256(-1)), bytes3(x), b, c);
 			}
 		}
 	)";
@@ -119,7 +108,7 @@ BOOST_AUTO_TEST_CASE(enum_type_cleanup)
 		compileAndRun(sourceCode);
 		BOOST_CHECK(callContractFunction("f(uint256)", 0) == encodeArgs(0));
 		BOOST_CHECK(callContractFunction("f(uint256)", 1) == encodeArgs(1));
-		BOOST_CHECK(callContractFunction("f(uint256)", 2) == encodeArgs());
+		BOOST_CHECK(callContractFunction("f(uint256)", 2) == panicData(PanicCode::EnumConversionError));
 	)
 }
 
@@ -166,7 +155,7 @@ BOOST_AUTO_TEST_CASE(memory_array_one_dim)
 		}
 	)";
 
-	if (!solidity::test::CommonOptions::get().useABIEncoderV2)
+	if (solidity::test::CommonOptions::get().useABIEncoderV1)
 	{
 		compileAndRun(sourceCode);
 		callContractFunction("f()");
@@ -174,9 +163,11 @@ BOOST_AUTO_TEST_CASE(memory_array_one_dim)
 		REQUIRE_LOG_DATA(encodeArgs(10, 0x60, 11, 3, u256("0xfffffffe"), u256("0xffffffff"), u256("0x100000000")));
 	}
 
-	compileAndRun(NewEncoderPragma + sourceCode);
-	callContractFunction("f()");
-	REQUIRE_LOG_DATA(encodeArgs(10, 0x60, 11, 3, u256(-2), u256(-1), u256(0)));
+	NEW_ENCODER(
+		compileAndRun(sourceCode);
+		callContractFunction("f()");
+		REQUIRE_LOG_DATA(encodeArgs(10, 0x60, 11, 3, u256(-2), u256(-1), u256(0)));
+	)
 }
 
 BOOST_AUTO_TEST_CASE(memory_array_two_dim)
@@ -189,7 +180,7 @@ BOOST_AUTO_TEST_CASE(memory_array_two_dim)
 				x[0] = new int16[](3);
 				x[1] = new int16[](2);
 				x[0][0] = 7;
-				x[0][1] = int16(0x010203040506);
+				x[0][1] = int16(int(0x010203040506));
 				x[0][2] = -1;
 				x[1][0] = 4;
 				x[1][1] = 5;
@@ -481,7 +472,7 @@ BOOST_AUTO_TEST_CASE(structs2)
 				s1[0].t[0].e = E.B;
 				s1[0].t[0].y = 0x12;
 				s2 = new S[](2);
-				s2[1].c = C(0x1234);
+				s2[1].c = C(address(0x1234));
 				s2[1].t = new T[](3);
 				s2[1].t[1].x = 0x21;
 				s2[1].t[1].e = E.C;

@@ -29,6 +29,9 @@
 #include <libsolidity/codegen/CompilerUtils.h>
 #include <libsolidity/codegen/LValue.h>
 
+#include <libsolutil/FunctionSelector.h>
+#include <libsolutil/Whiskers.h>
+
 #include <libevmasm/Instruction.h>
 #include <liblangutil/Exceptions.h>
 
@@ -46,9 +49,9 @@ void ArrayUtils::copyArrayToStorage(ArrayType const& _targetType, ArrayType cons
 	// stack layout: [source_ref] [source length] target_ref (top)
 	solAssert(_targetType.location() == DataLocation::Storage, "");
 
-	TypePointer uint256 = TypeProvider::uint256();
-	TypePointer targetBaseType = _targetType.isByteArray() ? uint256 : _targetType.baseType();
-	TypePointer sourceBaseType = _sourceType.isByteArray() ? uint256 : _sourceType.baseType();
+	Type const* uint256 = TypeProvider::uint256();
+	Type const* targetBaseType = _targetType.isByteArray() ? uint256 : _targetType.baseType();
+	Type const* sourceBaseType = _sourceType.isByteArray() ? uint256 : _sourceType.baseType();
 
 	// TODO unroll loop for small sizes
 
@@ -76,8 +79,8 @@ void ArrayUtils::copyArrayToStorage(ArrayType const& _targetType, ArrayType cons
 	}
 
 	// stack: target_ref source_ref source_length
-	TypePointer targetType = &_targetType;
-	TypePointer sourceType = &_sourceType;
+	Type const* targetType = &_targetType;
+	Type const* sourceType = &_sourceType;
 	m_context.callLowLevelFunction(
 		"$copyArrayToStorage_" + sourceType->identifier() + "_to_" + targetType->identifier(),
 		3,
@@ -546,7 +549,7 @@ void ArrayUtils::copyArrayToMemory(ArrayType const& _sourceType, bool _padToWord
 
 void ArrayUtils::clearArray(ArrayType const& _typeIn) const
 {
-	TypePointer type = &_typeIn;
+	Type const* type = &_typeIn;
 	m_context.callLowLevelFunction(
 		"$clearArray_" + _typeIn.identifier(),
 		2,
@@ -651,7 +654,7 @@ void ArrayUtils::clearDynamicArray(ArrayType const& _type) const
 
 void ArrayUtils::resizeDynamicArray(ArrayType const& _typeIn) const
 {
-	TypePointer type = &_typeIn;
+	Type const* type = &_typeIn;
 	m_context.callLowLevelFunction(
 		"$resizeDynamicArray_" + _typeIn.identifier(),
 		2,
@@ -815,30 +818,25 @@ void ArrayUtils::incrementDynamicArraySize(ArrayType const& _type) const
 		// lowest-order byte (we actually use a mask with fewer bits) must
 		// be (31*2+0) = 62
 
+		m_context << Instruction::DUP1 << Instruction::SLOAD << Instruction::DUP1;
+		m_context.callYulFunction(m_context.utilFunctions().extractByteArrayLengthFunction(), 1, 1);
 		m_context.appendInlineAssembly(R"({
-			let data := sload(ref)
-			let shifted_length := and(data, 63)
 			// We have to copy if length is exactly 31, because that marks
 			// the transition between in-place and out-of-place storage.
-			switch shifted_length
-			case 62
+			switch length
+			case 31
 			{
 				mstore(0, ref)
 				let data_area := keccak256(0, 0x20)
 				sstore(data_area, and(data, not(0xff)))
-				// New length is 32, encoded as (32 * 2 + 1)
-				sstore(ref, 65)
-				// Replace ref variable by new length
-				ref := 32
+				// Set old length in new format (31 * 2 + 1)
+				data := 63
 			}
-			default
-			{
-				sstore(ref, add(data, 2))
-				// Replace ref variable by new length
-				if iszero(and(data, 1)) { data := shifted_length }
-				ref := add(div(data, 2), 1)
-			}
-		})", {"ref"});
+			sstore(ref, add(data, 2))
+			// return new length in ref
+			ref := add(length, 1)
+		})", {"ref", "data", "length"});
+		m_context << Instruction::POP << Instruction::POP;
 	}
 	else
 		m_context.appendInlineAssembly(R"({
@@ -857,24 +855,25 @@ void ArrayUtils::popStorageArrayElement(ArrayType const& _type) const
 
 	if (_type.isByteArray())
 	{
-		m_context.appendInlineAssembly(R"({
-			let slot_value := sload(ref)
-			switch and(slot_value, 1)
+		m_context << Instruction::DUP1 << Instruction::SLOAD << Instruction::DUP1;
+		m_context.callYulFunction(m_context.utilFunctions().extractByteArrayLengthFunction(), 1, 1);
+		util::Whiskers code(R"({
+			if iszero(length) {
+				mstore(0, <panicSelector>)
+				mstore(4, <emptyArrayPop>)
+				revert(0, 0x24)
+			}
+			switch gt(length, 31)
 			case 0 {
 				// short byte array
-				let length := and(div(slot_value, 2), 0x1f)
-				if iszero(length) { invalid() }
-
 				// Zero-out the suffix including the least significant byte.
 				let mask := sub(exp(0x100, sub(33, length)), 1)
 				length := sub(length, 1)
 				slot_value := or(and(not(mask), slot_value), mul(length, 2))
-				sstore(ref, slot_value)
 			}
 			case 1 {
 				// long byte array
 				mstore(0, ref)
-				let length := div(slot_value, 2)
 				let slot := keccak256(0, 0x20)
 				switch length
 				case 32
@@ -882,7 +881,7 @@ void ArrayUtils::popStorageArrayElement(ArrayType const& _type) const
 					let data := sload(slot)
 					sstore(slot, 0)
 					data := and(data, not(0xff))
-					sstore(ref, or(data, 62))
+					slot_value := or(data, 62)
 				}
 				default
 				{
@@ -898,11 +897,14 @@ void ArrayUtils::popStorageArrayElement(ArrayType const& _type) const
 
 					// Reduce the length by 1
 					slot_value := sub(slot_value, 2)
-					sstore(ref, slot_value)
 				}
 			}
-		})", {"ref"});
-		m_context << Instruction::POP;
+			sstore(ref, slot_value)
+		})");
+		code("panicSelector", util::selectorFromSignature("Panic(uint256)").str());
+		code("emptyArrayPop", to_string(unsigned(util::PanicCode::EmptyArrayPop)));
+		m_context.appendInlineAssembly(code.render(), {"ref", "slot_value", "length"});
+		m_context << Instruction::POP << Instruction::POP << Instruction::POP;
 	}
 	else
 	{
@@ -912,7 +914,7 @@ void ArrayUtils::popStorageArrayElement(ArrayType const& _type) const
 		m_context << Instruction::DUP1;
 		// stack: ArrayReference oldLength oldLength
 		m_context << Instruction::ISZERO;
-		m_context.appendConditionalInvalid();
+		m_context.appendConditionalPanic(util::PanicCode::EmptyArrayPop);
 
 		// Stack: ArrayReference oldLength
 		m_context << u256(1) << Instruction::SWAP1 << Instruction::SUB;
@@ -932,7 +934,7 @@ void ArrayUtils::popStorageArrayElement(ArrayType const& _type) const
 	}
 }
 
-void ArrayUtils::clearStorageLoop(TypePointer _type) const
+void ArrayUtils::clearStorageLoop(Type const* _type) const
 {
 	solAssert(_type->storageBytes() >= 32, "");
 	m_context.callLowLevelFunction(
@@ -1030,16 +1032,7 @@ void ArrayUtils::retrieveLength(ArrayType const& _arrayType, unsigned _stackDept
 		case DataLocation::Storage:
 			m_context << Instruction::SLOAD;
 			if (_arrayType.isByteArray())
-			{
-				// Retrieve length both for in-place strings and off-place strings:
-				// Computes (x & (0x100 * (ISZERO (x & 1)) - 1)) / 2
-				// i.e. for short strings (x & 1 == 0) it does (x & 0xff) / 2 and for long strings it
-				// computes (x & (-1)) / 2, which is equivalent to just x / 2.
-				m_context << u256(1) << Instruction::DUP2 << u256(1) << Instruction::AND;
-				m_context << Instruction::ISZERO << u256(0x100) << Instruction::MUL;
-				m_context << Instruction::SUB << Instruction::AND;
-				m_context << u256(2) << Instruction::SWAP1 << Instruction::DIV;
-			}
+				m_context.callYulFunction(m_context.utilFunctions().extractByteArrayLengthFunction(), 1, 1);
 			break;
 		}
 	}
@@ -1058,7 +1051,7 @@ void ArrayUtils::accessIndex(ArrayType const& _arrayType, bool _doBoundsCheck, b
 		// check out-of-bounds access
 		m_context << Instruction::DUP2 << Instruction::LT << Instruction::ISZERO;
 		// out-of-bounds access throws exception
-		m_context.appendConditionalInvalid();
+		m_context.appendConditionalPanic(util::PanicCode::ArrayOutOfBounds);
 	}
 	if (location == DataLocation::CallData && _arrayType.isDynamicallySized())
 		// remove length if present

@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 
 contract A {
 
@@ -50,7 +48,10 @@ contract MyConc{
     }
 
 }
+// ====
+// SMTEngine: all
+// SMTIgnoreCex: yes
 // ----
-// Warning 2519: (773-792): This declaration shadows an existing declaration.
-// Warning 2018: (1009-1086): Function state mutability can be restricted to view
-// Warning 4984: (985-1002): CHC: Overflow (resulting value larger than 2**256 - 1) happens here.\nCounterexample:\nA = 1, should_be_constant = 0, should_be_constant_2 = 2, not_constant = 0, not_constant_2 = 115792089237316195423570985008687907853269984665640564039457584007913129639926, not_constant_3 = 0\n\nTransaction trace:\nconstructor()
+// Warning 2519: (740-759): This declaration shadows an existing declaration.
+// Warning 2018: (976-1053): Function state mutability can be restricted to view
+// Warning 4984: (952-969): CHC: Overflow (resulting value larger than 2**256 - 1) happens here.

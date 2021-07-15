@@ -11,6 +11,10 @@ contract C {
     function i() public view returns (uint) {
         return block.timestamp;
     }
+    function j() public view returns (uint) {
+        return block.chainid;
+    }
 }
 // ====
 // EVMVersion: >=istanbul
+// ----

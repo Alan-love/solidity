@@ -12,10 +12,10 @@ Functions outside of a contract, also called "free functions", always have impli
 :ref:`visibility<visibility-and-getters>`. Their code is included in all contracts
 that call them, similar to internal library functions.
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >0.7.0 <0.8.0;
+    pragma solidity >0.7.0 <0.9.0;
 
     function sum(uint[] memory _arr) pure returns (uint s) {
         for (uint i = 0; i < _arr.length; i++)
@@ -56,10 +56,12 @@ Function parameters are declared the same way as variables, and the name of
 unused parameters can be omitted.
 
 For example, if you want your contract to accept one kind of external call
-with two integers, you would use something like the following::
+with two integers, you would use something like the following:
+
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.4.16 <0.8.0;
+    pragma solidity >=0.4.16 <0.9.0;
 
     contract Simple {
         uint sum;
@@ -89,10 +91,12 @@ Function return variables are declared with the same syntax after the
 ``returns`` keyword.
 
 For example, suppose you want to return two results: the sum and the product of
-two integers passed as function parameters, then you use something like::
+two integers passed as function parameters, then you use something like:
+
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.4.16 <0.8.0;
+    pragma solidity >=0.4.16 <0.9.0;
 
     contract Simple {
         function arithmetic(uint _a, uint _b)
@@ -114,10 +118,12 @@ You can either explicitly assign to return variables and
 then leave the function as above,
 or you can provide return values
 (either a single or :ref:`multiple ones<multi-return>`) directly with the ``return``
-statement::
+statement:
+
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.4.16 <0.8.0;
+    pragma solidity >=0.4.16 <0.9.0;
 
     contract Simple {
         function arithmetic(uint _a, uint _b)
@@ -178,10 +184,10 @@ The following statements are considered modifying the state:
 #. Using low-level calls.
 #. Using inline assembly that contains certain opcodes.
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.5.0 <0.8.0;
+    pragma solidity >=0.5.0 <0.9.0;
 
     contract C {
         function f(uint a, uint b) public view returns (uint) {
@@ -224,10 +230,10 @@ In addition to the list of state modifying statements explained above, the follo
 #. Calling any function not marked ``pure``.
 #. Using inline assembly that contains certain opcodes.
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.5.0 <0.8.0;
+    pragma solidity >=0.5.0 <0.9.0;
 
     contract C {
         function f(uint a, uint b) public pure returns (uint) {
@@ -321,10 +327,10 @@ will consume more gas than the 2300 gas stipend:
 
 Below you can see an example of a Sink contract that uses function ``receive``.
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.6.0 <0.8.0;
+    pragma solidity >=0.6.0 <0.9.0;
 
     // This contract keeps all Ether sent to it with no way
     // to get it back.
@@ -383,22 +389,24 @@ operations as long as there is enough gas passed on to it.
     proper functions should be used instead.
 
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.6.2 <0.8.0;
+    pragma solidity >=0.6.2 <0.9.0;
 
     contract Test {
+        uint x;
         // This function is called for all messages sent to
         // this contract (there is no other function).
         // Sending Ether to this contract will cause an exception,
         // because the fallback function does not have the `payable`
         // modifier.
         fallback() external { x = 1; }
-        uint x;
     }
 
     contract TestPayable {
+        uint x;
+        uint y;
         // This function is called for all messages sent to
         // this contract, except plain Ether transfers
         // (there is no other function except the receive function).
@@ -409,8 +417,6 @@ operations as long as there is enough gas passed on to it.
         // This function is called for plain Ether transfers, i.e.
         // for every call with empty calldata.
         receive() external payable { x = 2; y = msg.value; }
-        uint x;
-        uint y;
     }
 
     contract Caller {
@@ -438,7 +444,10 @@ operations as long as there is enough gas passed on to it.
             // results in test.x becoming == 1 and test.y becoming 1.
 
             // If someone sends Ether to that contract, the receive function in TestPayable will be called.
-            require(address(test).send(2 ether));
+            // Since that function writes to storage, it takes more gas than is available with a
+            // simple ``send`` or ``transfer``. Because of that, we have to use a low-level call.
+            (success,) = address(test).call{value: 2 ether}("");
+            require(success);
             // results in test.x becoming == 2 and test.y becoming 2 ether.
 
             return true;
@@ -458,10 +467,10 @@ This process is called "overloading" and also applies to inherited functions.
 The following example shows overloading of the function
 ``f`` in the scope of contract ``A``.
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.4.16 <0.8.0;
+    pragma solidity >=0.4.16 <0.9.0;
 
     contract A {
         function f(uint _in) public pure returns (uint out) {
@@ -477,10 +486,10 @@ The following example shows overloading of the function
 Overloaded functions are also present in the external interface. It is an error if two
 externally visible functions differ by their Solidity types but not by their external types.
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.4.16 <0.8.0;
+    pragma solidity >=0.4.16 <0.9.0;
 
     // This will not compile
     contract A {
@@ -511,10 +520,10 @@ candidate, resolution fails.
 .. note::
     Return parameters are not taken into account for overload resolution.
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.4.16 <0.8.0;
+    pragma solidity >=0.4.16 <0.9.0;
 
     contract A {
         function f(uint8 _in) public pure returns (uint8 out) {

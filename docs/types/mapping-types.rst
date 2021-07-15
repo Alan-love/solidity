@@ -40,10 +40,10 @@ an Ethereum address to an unsigned integer value. As ``uint`` is a value type, t
 returns a value that matches the type, which you can see in the ``MappingUser``
 contract that returns the value at the specified address.
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.4.0 <0.8.0;
+    pragma solidity >=0.4.0 <0.9.0;
 
     contract MappingExample {
         mapping(address => uint) public balances;
@@ -66,10 +66,10 @@ The example below is a simplified version of an
 ``_allowances`` is an example of a mapping type inside another mapping type.
 The example below uses ``_allowances`` to record the amount someone else is allowed to withdraw from your account.
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.4.22 <0.8.0;
+    pragma solidity >=0.4.22 <0.9.0;
 
     contract MappingExample {
 
@@ -121,10 +121,10 @@ top of them and iterate over that. For example, the code below implements an
 ``IterableMapping`` library that the ``User`` contract then adds data too, and
 the ``sum`` function iterates over to sum all the values.
 
-::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.6.0 <0.8.0;
+    pragma solidity >=0.6.8 <0.9.0;
 
     struct IndexValue { uint keyIndex; uint value; }
     struct KeyFlag { uint key; bool deleted; }
@@ -165,7 +165,7 @@ the ``sum`` function iterates over to sum all the values.
         }
 
         function iterate_start(itmap storage self) internal view returns (uint keyIndex) {
-            return iterate_next(self, uint(-1));
+            return iterate_next(self, type(uint).max);
         }
 
         function iterate_valid(itmap storage self, uint keyIndex) internal view returns (bool) {

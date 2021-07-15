@@ -25,7 +25,6 @@
 #include <libyul/backends/evm/EVMDialect.h>
 #include <libyul/backends/wasm/WasmDialect.h>
 #include <libyul/backends/wasm/EVMToEwasmTranslator.h>
-#include <libyul/AsmParser.h>
 #include <libyul/AssemblyStack.h>
 #include <libyul/AsmAnalysisInfo.h>
 #include <libyul/AST.h>
@@ -64,7 +63,8 @@ TestCase::TestResult EwasmTranslationTest::run(ostream& _stream, string const& _
 		return TestResult::FatalError;
 
 	*m_object = EVMToEwasmTranslator(
-		EVMDialect::strictAssemblyForEVMObjects(solidity::test::CommonOptions::get().evmVersion())
+		EVMDialect::strictAssemblyForEVMObjects(solidity::test::CommonOptions::get().evmVersion()),
+		m_stack
 	).run(*m_object);
 
 	// Add call to "main()".
@@ -79,20 +79,21 @@ TestCase::TestResult EwasmTranslationTest::run(ostream& _stream, string const& _
 
 bool EwasmTranslationTest::parse(ostream& _stream, string const& _linePrefix, bool const _formatted)
 {
-	AssemblyStack stack(
+	m_stack = AssemblyStack(
 		solidity::test::CommonOptions::get().evmVersion(),
 		AssemblyStack::Language::StrictAssembly,
 		solidity::frontend::OptimiserSettings::none()
 	);
-	if (stack.parseAndAnalyze("", m_source))
+	if (m_stack.parseAndAnalyze("", m_source))
 	{
-		m_object = stack.parserResult();
+		m_object = m_stack.parserResult();
 		return true;
 	}
 	else
 	{
 		AnsiColorized(_stream, _formatted, {formatting::BOLD, formatting::RED}) << _linePrefix << "Error parsing source." << endl;
-		printErrors(_stream, stack.errors());
+		SourceReferenceFormatter{_stream, m_stack, true, false}
+			.printErrorInformation(m_stack.errors());
 		return false;
 	}
 }
@@ -114,12 +115,4 @@ string EwasmTranslationTest::interpret()
 	stringstream result;
 	state.dumpTraceAndState(result);
 	return result.str();
-}
-
-void EwasmTranslationTest::printErrors(ostream& _stream, ErrorList const& _errors)
-{
-	SourceReferenceFormatter formatter(_stream);
-
-	for (auto const& error: _errors)
-		formatter.printErrorInformation(*error);
 }

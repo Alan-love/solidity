@@ -39,10 +39,10 @@ load it into a ``bytes`` variable. This is not possible with "plain Solidity" an
 idea is that reusable assembly libraries can enhance the Solidity language
 without a compiler change.
 
-.. code::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.4.16 <0.8.0;
+    pragma solidity >=0.4.16 <0.9.0;
 
     library GetCode {
         function at(address _addr) public view returns (bytes memory o_code) {
@@ -65,10 +65,10 @@ without a compiler change.
 Inline assembly is also beneficial in cases where the optimizer fails to produce
 efficient code, for example:
 
-.. code::
+.. code-block:: solidity
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity >=0.4.16 <0.8.0;
+    pragma solidity >=0.4.16 <0.9.0;
 
 
     library VectorSum {
@@ -141,10 +141,11 @@ Both expressions can also be assigned to.
 
 Local Solidity variables are available for assignments, for example:
 
-.. code::
+.. code-block:: solidity
+    :force:
 
     // SPDX-License-Identifier: GPL-3.0
-    pragma solidity ^0.7.0;
+    pragma solidity >=0.7.0 <0.9.0;
 
     contract C {
         uint b;
@@ -159,7 +160,7 @@ Local Solidity variables are available for assignments, for example:
 
 .. warning::
     If you access variables of a type that spans less than 256 bits
-    (for example ``uint64``, ``address``, ``bytes16`` or ``byte``),
+    (for example ``uint64``, ``address``, or ``bytes16``),
     you cannot make any assumptions about bits not part of the
     encoding of the type. Especially, do not assume them to be zero.
     To be safe, always clear the data properly before you use it
@@ -216,7 +217,9 @@ starting from where this pointer points at and update it.
 There is no guarantee that the memory has not been used before and thus
 you cannot assume that its contents are zero bytes.
 There is no built-in mechanism to release or free allocated memory.
-Here is an assembly snippet you can use for allocating memory that follows the process outlined above::
+Here is an assembly snippet you can use for allocating memory that follows the process outlined above
+
+.. code-block:: yul
 
     function allocate(length) -> pos {
       pos := mload(0x40)
@@ -231,7 +234,7 @@ This means that the allocatable memory starts at ``0x80``, which is the initial 
 of the free memory pointer.
 
 Elements in memory arrays in Solidity always occupy multiples of 32 bytes (this is
-even true for ``byte[]``, but not for ``bytes`` and ``string``). Multi-dimensional memory
+even true for ``bytes1[]``, but not for ``bytes`` and ``string``). Multi-dimensional memory
 arrays are pointers to memory arrays. The length of a dynamic array is stored at the
 first slot of the array and followed by the array elements.
 

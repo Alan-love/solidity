@@ -13,6 +13,7 @@ set(sources
 	ParserBase.h
 	Scanner.cpp
 	Scanner.h
+	CharStreamProvider.h
 	SemVerHandler.cpp
 	SemVerHandler.h
 	SourceLocation.h
@@ -21,8 +22,6 @@ set(sources
 	SourceReferenceExtractor.h
 	SourceReferenceFormatter.cpp
 	SourceReferenceFormatter.h
-	SourceReferenceFormatterHuman.cpp
-	SourceReferenceFormatterHuman.h
 	Token.cpp
 	Token.h
 	UndefMacros.h
