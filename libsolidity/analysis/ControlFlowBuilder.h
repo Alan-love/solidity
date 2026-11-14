@@ -26,28 +26,31 @@
 #include <array>
 #include <memory>
 
-namespace solidity::frontend {
+namespace solidity::frontend
+{
 
-/** Helper class that builds the control flow of a function or modifier.
- * Modifiers are not yet applied to the functions. This is done in a second
- * step in the CFG class.
+/**
+ * Helper class that builds the control flow of a function or modifier.
  */
 class ControlFlowBuilder: private ASTConstVisitor, private yul::ASTWalker
 {
 public:
 	static std::unique_ptr<FunctionFlow> createFunctionFlow(
 		CFG::NodeContainer& _nodeContainer,
-		FunctionDefinition const& _function
+		FunctionDefinition const& _function,
+		ContractDefinition const* _contract
 	);
 
 private:
 	explicit ControlFlowBuilder(
 		CFG::NodeContainer& _nodeContainer,
-		FunctionFlow const& _functionFlow
+		FunctionFlow const& _functionFlow,
+		ContractDefinition const* _contract
 	);
 
 	// Visits for constructing the control flow.
 	bool visit(BinaryOperation const& _operation) override;
+	bool visit(UnaryOperation const& _operation) override;
 	bool visit(Conditional const& _conditional) override;
 	bool visit(TryStatement const& _tryStatement) override;
 	bool visit(IfStatement const& _ifStatement) override;
@@ -56,6 +59,7 @@ private:
 	bool visit(Break const&) override;
 	bool visit(Continue const&) override;
 	bool visit(Throw const&) override;
+	bool visit(RevertStatement const&) override;
 	bool visit(PlaceholderStatement const&) override;
 	bool visit(FunctionCall const& _functionCall) override;
 	bool visit(ModifierInvocation const& _modifierInvocation) override;
@@ -133,7 +137,7 @@ private:
 	}
 
 	/// Merges the control flow of @a _nodes to @a _endNode.
-	/// If @a _endNode is nullptr, a new node is creates and used as end node.
+	/// If @a _endNode is nullptr, a new node is created and used as end node.
 	/// Sets the merge destination as current node.
 	/// Note: @a _endNode may be one of the nodes in @a _nodes.
 	template<typename C>
@@ -148,7 +152,7 @@ private:
 
 	CFGNode* newLabel();
 	CFGNode* createLabelHere();
-	void placeAndConnectLabel(CFGNode *_node);
+	void placeAndConnectLabel(CFGNode* _node);
 
 	CFG::NodeContainer& m_nodeContainer;
 
@@ -156,6 +160,8 @@ private:
 	CFGNode* m_returnNode = nullptr;
 	CFGNode* m_revertNode = nullptr;
 	CFGNode* m_transactionReturnNode = nullptr;
+
+	ContractDefinition const* m_contract = nullptr;
 
 	/// The current jump destination of break Statements.
 	CFGNode* m_breakJump = nullptr;

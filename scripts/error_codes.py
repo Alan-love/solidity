@@ -18,7 +18,7 @@ def read_file(file_name):
         with open(file_name, "r", encoding="latin-1" if is_latin else ENCODING) as f:
             content = f.read()
     finally:
-        if content == None:
+        if content is None:
             print(f"Error reading: {file_name}")
     return content
 
@@ -44,11 +44,11 @@ def find_ids_in_source_file(file_name, id_to_file_names):
         if in_comment(source, m.start()):
             continue
         underscore_pos = m.group(0).index("_")
-        id = m.group(0)[0:underscore_pos]
-        if id in id_to_file_names:
-            id_to_file_names[id].append(file_name)
+        error_id = m.group(0)[0:underscore_pos]
+        if error_id in id_to_file_names:
+            id_to_file_names[error_id].append(file_name)
         else:
-            id_to_file_names[id] = [file_name]
+            id_to_file_names[error_id] = [file_name]
 
 
 def find_ids_in_source_files(file_names):
@@ -76,16 +76,16 @@ def fix_ids_in_source_file(file_name, id_to_count, available_ids):
         destination.extend(source[k:m.start()])
 
         underscore_pos = m.group(0).index("_")
-        id = m.group(0)[0:underscore_pos]
+        error_id = m.group(0)[0:underscore_pos]
 
         # incorrect id or id has a duplicate somewhere
-        if not in_comment(source, m.start()) and (len(id) != 4 or id[0] == "0" or id_to_count[id] > 1):
-            assert id in id_to_count
+        if not in_comment(source, m.start()) and (len(error_id) != 4 or error_id[0] == "0" or id_to_count[error_id] > 1):
+            assert error_id in id_to_count
             new_id = get_next_id(available_ids)
             assert new_id not in id_to_count
-            id_to_count[id] -= 1
+            id_to_count[error_id] -= 1
         else:
-            new_id = id
+            new_id = error_id
 
         destination.extend(new_id + "_error")
         k = m.end()
@@ -104,7 +104,7 @@ def fix_ids_in_source_files(file_names, id_to_count):
     id_to_count contains number of appearances of every id in sources
     """
 
-    available_ids = {str(id) for id in range(1000, 10000)} - id_to_count.keys()
+    available_ids = {str(error_id) for error_id in range(1000, 10000)} - id_to_count.keys()
     for file_name in file_names:
         fix_ids_in_source_file(file_name, id_to_count, available_ids)
 
@@ -113,8 +113,8 @@ def find_files(top_dir, sub_dirs, extensions):
     """Builds a list of files with given extensions in specified subdirectories"""
 
     source_file_names = []
-    for dir in sub_dirs:
-        for root, _, file_names in os.walk(os.path.join(top_dir, dir), onerror=lambda e: exit(f"Walk error: {e}")):
+    for directory in sub_dirs:
+        for root, _, file_names in os.walk(os.path.join(top_dir, directory), onerror=lambda e: sys.exit(f"Walk error: {e}")):
             for file_name in file_names:
                 _, ext = path.splitext(file_name)
                 if ext in extensions:
@@ -125,7 +125,7 @@ def find_files(top_dir, sub_dirs, extensions):
 
 def find_ids_in_test_file(file_name):
     source = read_file(file_name)
-    pattern = r"^// (.*Error|Warning) \d\d\d\d:"
+    pattern = r"^// (.*Error|Warning|Info) \d\d\d\d:"
     return {m.group(0)[-5:-1] for m in re.finditer(pattern, source, flags=re.MULTILINE)}
 
 
@@ -145,33 +145,33 @@ def find_ids_in_cmdline_test_err(file_name):
 
 
 def print_ids(ids):
-    for k, id in enumerate(sorted(ids)):
+    for k, error_id in enumerate(sorted(ids)):
         if k % 10 > 0:
             print(" ", end="")
         elif k > 0:
             print()
-        print(id, end="")
+        print(error_id, end="")
 
 
 def print_ids_per_file(ids, id_to_file_names, top_dir):
     file_name_to_ids = {}
-    for id in ids:
-        for file_name in id_to_file_names[id]:
+    for error_id in ids:
+        for file_name in id_to_file_names[error_id]:
             relpath = path.relpath(file_name, top_dir)
             if relpath not in file_name_to_ids:
                 file_name_to_ids[relpath] = []
-            file_name_to_ids[relpath].append(id)
+            file_name_to_ids[relpath].append(error_id)
 
     for file_name in sorted(file_name_to_ids):
         print(file_name)
-        for id in sorted(file_name_to_ids[file_name]):
-            print(f" {id}", end="")
+        for error_id in sorted(file_name_to_ids[file_name]):
+            print(f" {error_id}", end="")
         print()
 
 
 def examine_id_coverage(top_dir, source_id_to_file_names, new_ids_only=False):
     test_sub_dirs = [
-        path.join("test", "libsolidity", "errorRecoveryTests"),
+        path.join("test", "libsolidity", "natspecJSON"),
         path.join("test", "libsolidity", "smtCheckerTests"),
         path.join("test", "libsolidity", "syntaxTests"),
         path.join("test", "libyul", "yulSyntaxTests")
@@ -188,14 +188,29 @@ def examine_id_coverage(top_dir, source_id_to_file_names, new_ids_only=False):
     # Warning (1878): SPDX license identifier not provided in source file. ....
     # Warning (3420): Source file does not specify required compiler version!
     test_ids |= find_ids_in_cmdline_test_err(path.join(top_dir, "test", "cmdlineTests", "error_codes", "err"))
-    test_ids |= find_ids_in_cmdline_test_err(path.join(top_dir, "test", "cmdlineTests", "yul_unimplemented", "err"))
 
     # white list of ids which are not covered by tests
     white_ids = {
+        "9804", # Tested in test/libyul/ObjectParser.cpp.
+        "1544",
+        "1749",
+        "2674",
+        "6367",
+        "8387",
         "3805", # "This is a pre-release compiler version, please do not use it in production."
                 # The warning may or may not exist in a compiler build.
-        "4591"  # "There are more than 256 warnings. Ignoring the rest."
+        "4591", # "There are more than 256 warnings. Ignoring the rest."
                 # Due to 3805, the warning lists look different for different compiler builds.
+        "1920", # Unimplemented feature error from YulStack (currently there are no UnimplementedFeatureErrors thrown by libyul)
+        "7053", # Unimplemented feature error (parsing stage), currently has no tests
+        "2339", # SMTChecker, covered by CL tests
+        "6240", # SMTChecker, covered by CL tests
+        "2788", # SMTChecker: BMC: verification condition(s) could not be proved
+        "1733", # AsmAnalysis: expecting bool expression (everything is implicitly bool without types in Yul)
+        "9547", # AsmAnalysis: assigning incompatible types in Yul (whitelisted as there are currently no types)
+        "5026", # ContractLevelChecker: too difficult to exceed transient storage max size due to only value types supported.
+        "1049", # AsmAnalysis: SLOTNUM only available for Amsterdam-compatible VMs. Only reachable once Amsterdam
+                # becomes the default EVM version.
     }
     assert len(test_ids & white_ids) == 0, "The sets are not supposed to intersect"
     test_ids |= white_ids
@@ -220,12 +235,36 @@ def examine_id_coverage(top_dir, source_id_to_file_names, new_ids_only=False):
             return False
 
     old_source_only_ids = {
-        "1123", "1220", "1584", "1823",
-        "1988", "2066", "2657", "2800", "3356",
-        "3893", "3996", "4010", "4802",
-        "5073", "5272", "5622", "7128",
-        "7589", "7593", "7653", "8065", "8084", "8140",
-        "8312", "8592", "9085", "9390"
+        "1218",
+        "1584",
+        "1823",
+        "1988",
+        "2066",
+        "2833",
+        "3356",
+        "3893",
+        "3996",
+        "4010",
+        "4458",
+        "4802",
+        "4902",
+        "5272",
+        "5798",
+        "5840",
+        "7128",
+        "7400",
+        "7589",
+        "7593",
+        "7649",
+        "7710",
+        "8065",
+        "8084",
+        "8140",
+        "8158",
+        "8312",
+        "8592",
+        "9134",
+        "9609",
     }
 
     new_source_only_ids = source_only_ids - old_source_only_ids
@@ -246,16 +285,14 @@ def examine_id_coverage(top_dir, source_id_to_file_names, new_ids_only=False):
 
 
 def main(argv):
-    # pylint: disable=too-many-branches, too-many-locals, too-many-statements
-
     check = False
     fix = False
     no_confirm = False
     examine_coverage = False
     next_id = False
-    opts, args = getopt.getopt(argv, "", ["check", "fix", "no-confirm", "examine-coverage", "next"])
+    opts, _args = getopt.getopt(argv, "", ["check", "fix", "no-confirm", "examine-coverage", "next"])
 
-    for opt, arg in opts:
+    for opt, _arg in opts:
         if opt == "--check":
             check = True
         elif opt == "--fix":
@@ -269,7 +306,7 @@ def main(argv):
 
     if [check, fix, examine_coverage, next_id].count(True) != 1:
         print("usage: python error_codes.py --check | --fix [--no-confirm] | --examine-coverage | --next")
-        exit(1)
+        sys.exit(1)
 
     cwd = os.getcwd()
 
@@ -281,23 +318,23 @@ def main(argv):
     source_id_to_file_names = find_ids_in_source_files(source_file_names)
 
     ok = True
-    for id in sorted(source_id_to_file_names):
-        if len(id) != 4:
-            print(f"ID {id} length != 4")
+    for error_id in sorted(source_id_to_file_names):
+        if len(error_id) != 4:
+            print(f"ID {error_id} length != 4")
             ok = False
-        if id[0] == "0":
-            print(f"ID {id} starts with zero")
+        if error_id[0] == "0":
+            print(f"ID {error_id} starts with zero")
             ok = False
-        if len(source_id_to_file_names[id]) > 1:
-            print(f"ID {id} appears {len(source_id_to_file_names[id])} times")
+        if len(source_id_to_file_names[error_id]) > 1:
+            print(f"ID {error_id} appears {len(source_id_to_file_names[error_id])} times")
             ok = False
 
     if examine_coverage:
         if not ok:
             print("Incorrect IDs have to be fixed before applying --examine-coverage")
-            exit(1)
+            sys.exit(1)
         res = 0 if examine_id_coverage(cwd, source_id_to_file_names) else 1
-        exit(res)
+        sys.exit(res)
 
     ok &= examine_id_coverage(cwd, source_id_to_file_names, new_ids_only=True)
 
@@ -306,18 +343,18 @@ def main(argv):
     if next_id:
         if not ok:
             print("Incorrect IDs have to be fixed before applying --next")
-            exit(1)
-        available_ids = {str(id) for id in range(1000, 10000)} - source_id_to_file_names.keys()
+            sys.exit(1)
+        available_ids = {str(error_id) for error_id in range(1000, 10000)} - source_id_to_file_names.keys()
         next_id = get_next_id(available_ids)
         print(f"Next ID: {next_id}")
-        exit(0)
+        sys.exit(0)
 
     if ok:
         print("No incorrect IDs found")
-        exit(0)
+        sys.exit(0)
 
     if check:
-        exit(1)
+        sys.exit(1)
 
     assert fix, "Unexpected state, should not come here without --fix"
 
@@ -330,14 +367,14 @@ def main(argv):
         while len(answer) == 0 or answer not in "YNyn":
             answer = input("[Y/N]? ")
         if answer not in "yY":
-            exit(1)
+            sys.exit(1)
 
     # number of appearances for every id
-    source_id_to_count = { id: len(file_names) for id, file_names in source_id_to_file_names.items() }
+    source_id_to_count = { error_id: len(file_names) for error_id, file_names in source_id_to_file_names.items() }
 
     fix_ids_in_source_files(source_file_names, source_id_to_count)
     print("Fixing completed")
-    exit(2)
+    sys.exit(2)
 
 
 if __name__ == "__main__":

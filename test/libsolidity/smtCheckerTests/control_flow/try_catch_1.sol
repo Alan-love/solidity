@@ -1,4 +1,3 @@
-pragma experimental SMTChecker;
 contract C {
 	function g() public returns (uint) {
 		try this.g() returns (uint x) { x; }
@@ -7,9 +6,7 @@ contract C {
 }
 // ====
 // EVMVersion: >=byzantium
+// SMTEngine: all
 // ----
-// Warning 6321: (75-79): Unnamed return variable can remain unassigned. Add an explicit return with value to all non-reverting code paths or name the variable.
-// Warning 7645: (98-121): Assertion checker does not support try/catch clauses.
-// Warning 7645: (124-159): Assertion checker does not support try/catch clauses.
-// Warning 7645: (98-121): Assertion checker does not support try/catch clauses.
-// Warning 7645: (124-159): Assertion checker does not support try/catch clauses.
+// Warning 6321: (43-47): Unnamed return variable can remain unassigned. Add an explicit return with value to all non-reverting code paths or name the variable.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

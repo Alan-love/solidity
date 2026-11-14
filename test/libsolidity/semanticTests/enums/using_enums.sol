@@ -11,9 +11,5 @@ contract test {
 
     ActionChoices choices;
 }
-
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // getChoice() -> 2

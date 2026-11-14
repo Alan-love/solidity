@@ -38,7 +38,6 @@
 
 #include <test/libsolidity/SolidityExecutionFramework.h>
 
-using namespace std;
 using namespace solidity::test;
 using namespace solidity::util;
 
@@ -56,7 +55,7 @@ static char const* walletCode = R"DELIMITER(
 // some number (specified in constructor) of the set of owners (specified in the constructor, modifiable) before the
 // interior is executed.
 
-pragma solidity >=0.4.0 <0.8.0;
+pragma solidity >=0.4.0 <0.9.0;
 
 contract multiowned {
 
@@ -103,19 +102,19 @@ contract multiowned {
 	// as well as the selection of addresses capable of confirming them.
 	constructor(address[] memory _owners, uint _required) {
 		m_numOwners = _owners.length + 1;
-		m_owners[1] = uint(msg.sender);
-		m_ownerIndex[uint(msg.sender)] = 1;
+		m_owners[1] = uint160(msg.sender);
+		m_ownerIndex[uint160(msg.sender)] = 1;
 		for (uint i = 0; i < _owners.length; ++i)
 		{
-			m_owners[2 + i] = uint(_owners[i]);
-			m_ownerIndex[uint(_owners[i])] = 2 + i;
+			m_owners[2 + i] = uint160(_owners[i]);
+			m_ownerIndex[uint160(_owners[i])] = 2 + i;
 		}
 		m_required = _required;
 	}
 
 	// Revokes a prior confirmation of the given operation
 	function revoke(bytes32 _operation) external {
-		uint ownerIndex = m_ownerIndex[uint(msg.sender)];
+		uint ownerIndex = m_ownerIndex[uint160(msg.sender)];
 		// make sure they're an owner
 		if (ownerIndex == 0) return;
 		uint ownerIndexBit = 2**ownerIndex;
@@ -130,13 +129,13 @@ contract multiowned {
 	// Replaces an owner `_from` with another `_to`.
 	function changeOwner(address _from, address _to) onlymanyowners(keccak256(msg.data)) public virtual {
 		if (isOwner(_to)) return;
-		uint ownerIndex = m_ownerIndex[uint(_from)];
+		uint ownerIndex = m_ownerIndex[uint160(_from)];
 		if (ownerIndex == 0) return;
 
 		clearPending();
-		m_owners[ownerIndex] = uint(_to);
-		m_ownerIndex[uint(_from)] = 0;
-		m_ownerIndex[uint(_to)] = ownerIndex;
+		m_owners[ownerIndex] = uint160(_to);
+		m_ownerIndex[uint160(_from)] = 0;
+		m_ownerIndex[uint160(_to)] = ownerIndex;
 		emit OwnerChanged(_from, _to);
 	}
 
@@ -149,18 +148,18 @@ contract multiowned {
 		if (m_numOwners >= c_maxOwners)
 			return;
 		m_numOwners++;
-		m_owners[m_numOwners] = uint(_owner);
-		m_ownerIndex[uint(_owner)] = m_numOwners;
+		m_owners[m_numOwners] = uint160(_owner);
+		m_ownerIndex[uint160(_owner)] = m_numOwners;
 		emit OwnerAdded(_owner);
 	}
 
 	function removeOwner(address _owner) onlymanyowners(keccak256(msg.data)) external {
-		uint ownerIndex = m_ownerIndex[uint(_owner)];
+		uint ownerIndex = m_ownerIndex[uint160(_owner)];
 		if (ownerIndex == 0) return;
 		if (m_required > m_numOwners - 1) return;
 
 		m_owners[ownerIndex] = 0;
-		m_ownerIndex[uint(_owner)] = 0;
+		m_ownerIndex[uint160(_owner)] = 0;
 		clearPending();
 		reorganizeOwners(); //make sure m_numOwner is equal to the number of owners and always points to the optimal free slot
 		emit OwnerRemoved(_owner);
@@ -174,12 +173,12 @@ contract multiowned {
 	}
 
 	function isOwner(address _addr) public returns (bool) {
-		return m_ownerIndex[uint(_addr)] > 0;
+		return m_ownerIndex[uint160(_addr)] > 0;
 	}
 
 	function hasConfirmed(bytes32 _operation, address _owner) public view returns (bool) {
 		PendingState storage pending = m_pending[_operation];
-		uint ownerIndex = m_ownerIndex[uint(_owner)];
+		uint ownerIndex = m_ownerIndex[uint160(_owner)];
 
 		// make sure they're an owner
 		if (ownerIndex == 0) return false;
@@ -197,7 +196,7 @@ contract multiowned {
 
 	function confirmAndCheck(bytes32 _operation) internal returns (bool) {
 		// determine what index the present sender is:
-		uint ownerIndex = m_ownerIndex[uint(msg.sender)];
+		uint ownerIndex = m_ownerIndex[uint160(msg.sender)];
 		// make sure they're an owner
 		if (ownerIndex == 0) return false;
 
@@ -445,7 +444,7 @@ class WalletTestFramework: public SolidityExecutionFramework
 protected:
 	void deployWallet(
 		u256 const& _value = 0,
-		vector<h160> const& _owners = vector<h160>{},
+		std::vector<h160> const& _owners = std::vector<h160>{},
 		u256 _required = 1,
 		u256 _dailyLimit = 0
 	)
@@ -455,7 +454,7 @@ protected:
 		});
 
 		bytes args = encodeArgs(u256(0x60), _required, _dailyLimit, u256(_owners.size()), _owners);
-		sendMessage(compiled + args, true, _value);
+		sendMessage(compiled, args, true, _value);
 		BOOST_REQUIRE(m_transactionSuccessful);
 		BOOST_REQUIRE(!m_output.empty());
 	}
@@ -468,7 +467,7 @@ BOOST_AUTO_TEST_CASE(creation)
 {
 	deployWallet(200);
 	BOOST_REQUIRE(callContractFunction("isOwner(address)", m_sender) == encodeArgs(true));
-	bool v2 = solidity::test::CommonOptions::get().useABIEncoderV2;
+	bool v2 = !solidity::test::CommonOptions::get().useABIEncoderV1;
 	BOOST_REQUIRE(callContractFunction("isOwner(address)", h256(~0)) == (v2 ? encodeArgs() : encodeArgs(false)));
 }
 
@@ -535,7 +534,7 @@ BOOST_AUTO_TEST_CASE(remove_owner)
 
 BOOST_AUTO_TEST_CASE(initial_owners)
 {
-	vector<h160> owners{
+	std::vector<h160> owners{
 		h160("0x42c56279432962a17176998a4747d1b4d6ed4367"),
 		h160("0xd4d4669f5ba9f4c27d38ef02a358c339b5560c47"),
 		h160("0xe6716f9544a56c530d868e4bfbacb172315bdead"),
@@ -591,7 +590,7 @@ BOOST_AUTO_TEST_CASE(revoke_addOwner)
 	BOOST_REQUIRE(callContractFunction("changeRequirement(uint256)", u256(3)) == encodeArgs());
 	// add a new owner
 	h160 deployer = m_sender;
-	h256 opHash = util::keccak256(FixedHash<4>(util::keccak256("addOwner(address)")).asBytes() + h256(0x33).asBytes());
+	h256 opHash = util::keccak256(util::selectorFromSignatureH32("addOwner(address)").asBytes() + h256(0x33).asBytes());
 	BOOST_REQUIRE(callContractFunction("addOwner(address)", h160(0x33)) == encodeArgs());
 	BOOST_REQUIRE(callContractFunction("isOwner(address)", h160(0x33)) == encodeArgs(false));
 	m_sender = account(0);

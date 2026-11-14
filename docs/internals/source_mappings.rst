@@ -26,7 +26,7 @@ that are not part of the original input but are referenced from the source
 mappings. These source files together with their identifiers can be
 obtained via ``output['contracts'][sourceName][contractName]['evm']['bytecode']['generatedSources']``.
 
-.. note ::
+.. note::
     In the case of instructions that are not associated with any particular source file,
     the source mapping assigns an integer identifier of ``-1``. This may happen for
     bytecode sections stemming from compiler-generated inline assembly statements.
@@ -56,11 +56,15 @@ used in a single modifier.
 In order to compress these source mappings especially for bytecode, the
 following rules are used:
 
- - If a field is empty, the value of the preceding element is used.
- - If a ``:`` is missing, all following fields are considered empty.
+- If a field is empty, the value of the preceding element is used.
+- If a ``:`` is missing, all following fields are considered empty.
 
 This means the following source mappings represent the same information:
 
 ``1:2:1;1:9:1;2:1:2;2:1:2;2:1:2``
 
 ``1:2:1;:9;2:1:2;;``
+
+Important to note is that when the :ref:`verbatim <yul-verbatim>` builtin is used,
+the source mappings will be invalid: The builtin is considered a single
+instruction instead of potentially multiple.

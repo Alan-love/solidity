@@ -1,9 +1,10 @@
-pragma experimental SMTChecker;
-
 contract K {
 	function f() public pure {
 		(abi.encode, 2);
 	}
 }
+// ====
+// SMTEngine: all
 // ----
-// Warning 6133: (76-91): Statement has no effect.
+// Warning 6133: (43-58): Statement has no effect.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

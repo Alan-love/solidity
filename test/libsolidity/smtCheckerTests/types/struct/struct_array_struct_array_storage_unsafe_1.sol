@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract C {
 	struct T {
 		uint y;
@@ -17,17 +15,37 @@ contract C {
 		assert(s1.x != 2);
 		s1.t.y = 3;
 		assert(s1.t.y != 3);
+		s1.a.push();
+		s1.a.push();
+		s1.a.push();
 		s1.a[2] = 4;
 		assert(s1.a[2] != 4);
+		s1.ts.push();
+		s1.ts.push();
+		s1.ts.push();
+		s1.ts.push();
+		s1.ts.push();
+		s1.ts.push();
 		s1.ts[3].y = 5;
 		assert(s1.ts[3].y != 5);
+		s1.ts[4].a.push();
+		s1.ts[4].a.push();
+		s1.ts[4].a.push();
+		s1.ts[4].a.push();
+		s1.ts[4].a.push();
+		s1.ts[4].a.push();
 		s1.ts[4].a[5] = 6;
 		assert(s1.ts[4].a[5] != 6);
 	}
 }
+// ====
+// SMTEngine: all
+// SMTIgnoreCex: yes
 // ----
-// Warning 6328: (181-198): CHC: Assertion violation happens here.\nCounterexample:\ns1 = {x: 2, t: {y: 0, a: []}, a: [], ts: []}\n\n\n\nTransaction trace:\nconstructor()\nState: s1 = {x: 0, t: {y: 0, a: []}, a: [], ts: []}\nf()
-// Warning 6328: (216-235): CHC: Assertion violation happens here.\nCounterexample:\ns1 = {x: 2, t: {y: 3, a: []}, a: [], ts: []}\n\n\n\nTransaction trace:\nconstructor()\nState: s1 = {x: 0, t: {y: 0, a: []}, a: [], ts: []}\nf()
-// Warning 6328: (254-274): CHC: Assertion violation happens here.\nCounterexample:\ns1 = {x: 2, t: {y: 3, a: []}, a: [], ts: []}\n\n\n\nTransaction trace:\nconstructor()\nState: s1 = {x: 0, t: {y: 0, a: []}, a: [], ts: []}\nf()
-// Warning 6328: (296-319): CHC: Assertion violation happens here.\nCounterexample:\ns1 = {x: 2, t: {y: 3, a: []}, a: [], ts: []}\n\n\n\nTransaction trace:\nconstructor()\nState: s1 = {x: 0, t: {y: 0, a: []}, a: [], ts: []}\nf()
-// Warning 6328: (344-370): CHC: Assertion violation happens here.\nCounterexample:\ns1 = {x: 2, t: {y: 3, a: []}, a: [], ts: []}\n\n\n\nTransaction trace:\nconstructor()\nState: s1 = {x: 0, t: {y: 0, a: []}, a: [], ts: []}\nf()
+// Warning 6328: (148-165): CHC: Assertion violation happens here.\nCounterexample:\ns1 = {x: 2, t: {y: 0, a: []}, a: [], ts: []}\n\nTransaction trace:\nC.constructor()\nState: s1 = {x: 0, t: {y: 0, a: []}, a: [], ts: []}\nC.f()
+// Warning 6328: (183-202): CHC: Assertion violation happens here.\nCounterexample:\ns1 = {x: 2, t: {y: 3, a: []}, a: [], ts: []}\n\nTransaction trace:\nC.constructor()\nState: s1 = {x: 0, t: {y: 0, a: []}, a: [], ts: []}\nC.f()
+// Warning 6328: (266-286): CHC: Assertion violation happens here.\nCounterexample:\ns1 = {x: 2, t: {y: 3, a: []}, a: [0, 0, 4], ts: []}\n\nTransaction trace:\nC.constructor()\nState: s1 = {x: 0, t: {y: 0, a: []}, a: [], ts: []}\nC.f()
+// Warning 6328: (404-427): CHC: Assertion violation happens here.
+// Warning 6328: (578-604): CHC: Assertion violation happens here.
+// Info 1391: CHC: 14 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

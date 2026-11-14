@@ -1,4 +1,3 @@
-pragma experimental SMTChecker;
 contract C {
     uint x;
     modifier m(uint z) {
@@ -20,5 +19,10 @@ contract C {
         assert(x == 6);
     }
 }
+// ====
+// SMTEngine: all
+// SMTIgnoreOS: macos
 // ----
-// Warning 6328: (365-379): CHC: Assertion violation happens here.\nCounterexample:\nx = 3\n\n\n\nTransaction trace:\nconstructor()\nState: x = 0\ng()
+// Warning 6328: (333-347): CHC: Assertion violation happens here.\nCounterexample:\nx = 3\n\nTransaction trace:\nC.constructor()\nState: x = 0\nC.g()\n    C.f() -- internal call
+// Info 1391: CHC: 3 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

@@ -10,13 +10,15 @@ contract Main {
 
     function s() public returns (bool) {
         Receiver r = new Receiver();
-        return address(r).send(0);
+        return payable(r).send(0);
     }
 }
-
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // constructor(), 20 wei ->
+// gas irOptimized: 56298
+// gas irOptimized code: 37200
+// gas legacy: 57555
+// gas legacy code: 53000
+// gas legacyOptimized: 56463
+// gas legacyOptimized code: 39600
 // s() -> true

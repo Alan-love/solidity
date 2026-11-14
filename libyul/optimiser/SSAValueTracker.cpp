@@ -22,9 +22,10 @@
 
 #include <libyul/optimiser/SSAValueTracker.h>
 
+#include <liblangutil/Exceptions.h>
+
 #include <libyul/AST.h>
 
-using namespace std;
 using namespace solidity;
 using namespace solidity::yul;
 
@@ -36,6 +37,13 @@ void SSAValueTracker::operator()(Assignment const& _assignment)
 
 void SSAValueTracker::operator()(FunctionDefinition const& _funDef)
 {
+	for (auto const& param: _funDef.parameters)
+	{
+		solAssert(!m_values.contains(param.name), "Source needs to be disambiguated.");
+		// `setValue` is not used here because it interprets `nullptr` as "known to be zero". Intention here is "unset".
+		m_values[param.name] = nullptr;
+	}
+
 	for (auto const& var: _funDef.returnVariables)
 		setValue(var.name, nullptr);
 	ASTWalker::operator()(_funDef);
@@ -50,17 +58,18 @@ void SSAValueTracker::operator()(VariableDeclaration const& _varDecl)
 		setValue(_varDecl.variables.front().name, _varDecl.value.get());
 }
 
-set<YulString> SSAValueTracker::ssaVariables(Block const& _ast)
+util::unordered_flat_set<YulName> SSAValueTracker::ssaVariables(Block const& _ast)
 {
 	SSAValueTracker t;
 	t(_ast);
-	set<YulString> ssaVars;
+	util::unordered_flat_set<YulName> ssaVars;
+	ssaVars.reserve(t.values().size());
 	for (auto const& value: t.values())
 		ssaVars.insert(value.first);
 	return ssaVars;
 }
 
-void SSAValueTracker::setValue(YulString _name, Expression const* _value)
+void SSAValueTracker::setValue(YulName _name, Expression const* _value)
 {
 	assertThrow(
 		m_values.count(_name) == 0,

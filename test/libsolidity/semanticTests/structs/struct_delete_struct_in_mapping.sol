@@ -13,8 +13,5 @@ contract test {
         return campaigns[0].m_value;
     }
 }
-
-// ====
-// compileViaYul: also
 // ----
 // deleteIt() -> 0

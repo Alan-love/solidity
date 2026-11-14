@@ -38,13 +38,18 @@ contract c {
         }
     }
 }
-// ====
-// compileViaYul: also
 // ----
-// storage: empty
+// storageEmpty -> 1
 // test_short() -> 1780731860627700044960722568376587075150542249149356309979516913770823710
-// storage: nonempty
+// gas legacy: 57661
+// gas legacyOptimized: 57073
+// storageEmpty -> 0
 // test_long() -> 67
-// storage: nonempty
+// gas irOptimized: 89479
+// gas legacy: 101607
+// gas legacyOptimized: 100479
+// storageEmpty -> 0
 // test_pop() -> 1780731860627700044960722568376592200742329637303199754547598369979433020
-// storage: nonempty
+// gas legacy: 58079
+// gas legacyOptimized: 56932
+// storageEmpty -> 0

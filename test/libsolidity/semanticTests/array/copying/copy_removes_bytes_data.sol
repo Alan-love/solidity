@@ -5,10 +5,13 @@ contract c {
     bytes data1;
     bytes data2;
 }
-// ====
-// compileViaYul: also
 // ----
 // set(): 1, 2, 3, 4, 5 -> true
-// storage: nonempty
+// gas irOptimized: 177341
+// gas legacy: 177953
+// gas legacyOptimized: 177551
+// gas ssaCFGOptimized: 177324
+// storageEmpty -> 0
 // reset() -> true
-// storage: empty
+// gas irOptimized: 47339
+// storageEmpty -> 1

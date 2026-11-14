@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract C
 {
 	mapping (uint => uint) map;
@@ -9,5 +7,9 @@ contract C
 		assert(x != map[2]);
 	}
 }
+// ====
+// SMTEngine: all
+// SMTIgnoreCex: no
 // ----
-// Warning 6328: (134-153): CHC: Assertion violation happens here.\nCounterexample:\n\nx = 3\n\n\nTransaction trace:\nconstructor()\nf(3)
+// Warning 6328: (101-120): CHC: Assertion violation happens here.\nCounterexample:\n\nx = 3\n\nTransaction trace:\nC.constructor()\nC.f(3)
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

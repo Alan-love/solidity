@@ -23,13 +23,13 @@
 #include <string>
 #include <tuple>
 #include <boost/test/unit_test.hpp>
+#include <boost/algorithm/string/trim.hpp>
 #include <liblangutil/Exceptions.h>
 #include <test/ExecutionFramework.h>
 
 #include <test/libsolidity/util/SoltestErrors.h>
 #include <test/libsolidity/util/TestFileParser.h>
 
-using namespace std;
 using namespace solidity::util;
 using namespace solidity::test;
 
@@ -42,26 +42,25 @@ using Mode = FunctionCall::DisplayMode;
 namespace
 {
 
-vector<FunctionCall> parse(string const& _source)
+std::vector<FunctionCall> parse(std::string const& _source, std::map<std::string, Builtin> const& _builtins = {})
 {
-	istringstream stream{_source, ios_base::out};
-	TestFileParser parser{stream};
-	return parser.parseFunctionCalls(0);
+	std::istringstream stream{_source, std::ios_base::out};
+	return TestFileParser{stream, _builtins}.parseFunctionCalls(0);
 }
 
 void testFunctionCall(
-		FunctionCall const& _call,
-		FunctionCall::DisplayMode _mode,
-		string _signature = "",
-		bool _failure = true,
-		bytes _arguments = bytes{},
-		bytes _expectations = bytes{},
-		FunctionValue _value = { 0 },
-		string _argumentComment = "",
-		string _expectationComment = "",
-		vector<string> _rawArguments = vector<string>{},
-		bool _isConstructor = false,
-		bool _isLibrary = false
+	FunctionCall const& _call,
+	FunctionCall::DisplayMode _mode,
+	std::string _signature = "",
+	bool _failure = true,
+	bytes _arguments = bytes{},
+	bytes _expectations = bytes{},
+	FunctionValue _value = { 0 },
+	std::string _argumentComment = "",
+	std::string _expectationComment = "",
+	std::vector<std::string> _rawArguments = std::vector<std::string>{},
+	bool _isConstructor = false,
+	bool _isLibrary = false
 )
 {
 	BOOST_REQUIRE_EQUAL(_call.expectations.failure, _failure);
@@ -99,7 +98,7 @@ BOOST_AUTO_TEST_CASE(smoke_test)
 	BOOST_REQUIRE_EQUAL(parse(source).size(), 0);
 }
 
-BOOST_AUTO_TEST_CASE(call_succees)
+BOOST_AUTO_TEST_CASE(call_success)
 {
 	char const* source = R"(
 		// success() ->
@@ -242,7 +241,7 @@ BOOST_AUTO_TEST_CASE(call_revert_message)
 		"f()",
 		true,
 		fmt::encodeArgs(),
-		fromHex("08c379a0") + fmt::encodeDyn(string{"Revert"})
+		fromHex("08c379a0") + fmt::encodeDyn(std::string{"Revert"})
 	);
 }
 
@@ -364,7 +363,7 @@ BOOST_AUTO_TEST_CASE(scanner_hex_values)
 	)";
 	auto const calls = parse(source);
 	BOOST_REQUIRE_EQUAL(calls.size(), 1);
-	testFunctionCall(calls.at(0), Mode::SingleLine, "f(uint256)", false, fmt::encodeArgs(string("\x20\x00\xff", 3)));
+	testFunctionCall(calls.at(0), Mode::SingleLine, "f(uint256)", false, fmt::encodeArgs(std::string("\x20\x00\xff", 3)));
 }
 
 BOOST_AUTO_TEST_CASE(scanner_hex_values_invalid1)
@@ -382,7 +381,7 @@ BOOST_AUTO_TEST_CASE(scanner_hex_values_invalid2)
 	)";
 	auto const calls = parse(source);
 	BOOST_REQUIRE_EQUAL(calls.size(), 1);
-	testFunctionCall(calls.at(0), Mode::SingleLine, "f(uint256)", false, fmt::encodeArgs(string("\x1", 1)));
+	testFunctionCall(calls.at(0), Mode::SingleLine, "f(uint256)", false, fmt::encodeArgs(std::string("\x1", 1)));
 }
 
 BOOST_AUTO_TEST_CASE(scanner_hex_values_invalid3)
@@ -447,7 +446,7 @@ BOOST_AUTO_TEST_CASE(call_arguments_string)
 		Mode::SingleLine,
 		"f(string)",
 		false,
-		fmt::encodeDyn(string{"any"})
+		fmt::encodeDyn(std::string{"any"})
 	);
 }
 
@@ -485,7 +484,7 @@ BOOST_AUTO_TEST_CASE(call_return_string)
 		"f()",
 		false,
 		fmt::encodeArgs(),
-		fmt::encodeDyn(string{"any"})
+		fmt::encodeDyn(std::string{"any"})
 	);
 }
 
@@ -799,7 +798,7 @@ BOOST_AUTO_TEST_CASE(call_arguments_tuple_invalid_empty)
 	BOOST_REQUIRE_THROW(parse(source), TestParserError);
 }
 
-BOOST_AUTO_TEST_CASE(call_arguments_tuple_invalid_parantheses)
+BOOST_AUTO_TEST_CASE(call_arguments_tuple_invalid_parentheses)
 {
 	char const* source = R"(
 		// f((uint8,() -> FAILURE
@@ -958,26 +957,251 @@ BOOST_AUTO_TEST_CASE(library)
 	);
 }
 
-BOOST_AUTO_TEST_CASE(empty_storage)
+BOOST_AUTO_TEST_CASE(call_effects)
 {
+	std::map<std::string, Builtin> builtins;
+	builtins["builtin_returning_call_effect"] = [](FunctionCall const&) -> std::optional<bytes>
+	{
+		return toBigEndian(u256(0x1234));
+	};
+	builtins["builtin_returning_call_effect_no_ret"] = [](FunctionCall const&) -> std::optional<bytes>
+	{
+		return {};
+	};
+
 	char const* source = R"(
-		// storage: empty
+		// builtin_returning_call_effect -> 1
+		// ~ bla
+		// ~ bla bla
+		// ~ bla bla bla
 	)";
-	auto const calls = parse(source);
+	std::vector<FunctionCall> calls = parse(source, builtins);
 	BOOST_REQUIRE_EQUAL(calls.size(), 1);
-	BOOST_CHECK(calls.at(0).kind == FunctionCall::Kind::Storage);
-	BOOST_CHECK(calls.at(0).expectations.result.front().rawBytes == bytes(1, 0));
+	BOOST_REQUIRE_EQUAL(calls[0].expectedSideEffects.size(), 3);
+	BOOST_REQUIRE_EQUAL(boost::trim_copy(calls[0].expectedSideEffects[0]), "bla");
+	BOOST_REQUIRE_EQUAL(boost::trim_copy(calls[0].expectedSideEffects[1]), "bla bla");
+	BOOST_REQUIRE_EQUAL(boost::trim_copy(calls[0].expectedSideEffects[2]), "bla bla bla");
+	source = R"(
+		// builtin_returning_call_effect -> 1
+		// ~ bla
+		// ~ bla bla
+		// builtin_returning_call_effect -> 2
+		// ~ bla bla bla
+		// builtin_returning_call_effect -> 3
+	)";
+	calls = parse(source, builtins);
+	BOOST_REQUIRE_EQUAL(calls.size(), 3);
+	BOOST_REQUIRE_EQUAL(calls[0].expectedSideEffects.size(), 2);
+	BOOST_REQUIRE_EQUAL(calls[1].expectedSideEffects.size(), 1);
+	BOOST_REQUIRE_EQUAL(calls[2].expectedSideEffects.size(), 0);
+	BOOST_REQUIRE_EQUAL(boost::trim_copy(calls[0].expectedSideEffects[0]), "bla");
+	BOOST_REQUIRE_EQUAL(boost::trim_copy(calls[0].expectedSideEffects[1]), "bla bla");
+	BOOST_REQUIRE_EQUAL(boost::trim_copy(calls[1].expectedSideEffects[0]), "bla bla bla");
+	source = R"(
+		// builtin_returning_call_effect -> 1
+		// ~ bla
+		// ~ bla bla bla
+		// ~ abc ~ def ~ ghi
+		// ~ ~ ~
+	)";
+	calls = parse(source, builtins);
+	BOOST_REQUIRE_EQUAL(calls.size(), 1);
+	BOOST_REQUIRE_EQUAL(calls[0].expectedSideEffects.size(), 4);
+	BOOST_REQUIRE_EQUAL(boost::trim_copy(calls[0].expectedSideEffects[0]), "bla");
+	BOOST_REQUIRE_EQUAL(boost::trim_copy(calls[0].expectedSideEffects[1]), "bla bla bla");
+	BOOST_REQUIRE_EQUAL(boost::trim_copy(calls[0].expectedSideEffects[2]), "abc ~ def ~ ghi");
+	BOOST_REQUIRE_EQUAL(boost::trim_copy(calls[0].expectedSideEffects[3]), "~ ~");
+	source = R"(
+		// builtin_returning_call_effect_no_ret ->
+		// ~ hello world
+	)";
+	calls = parse(source, builtins);
+	BOOST_REQUIRE_EQUAL(calls.size(), 1);
+	BOOST_REQUIRE_EQUAL(calls[0].expectedSideEffects.size(), 1);
+	BOOST_REQUIRE_EQUAL(boost::trim_copy(calls[0].expectedSideEffects[0]), "hello world");
+	source = R"(
+		// builtin_returning_call_effect -> 1
+		// ~
+	)";
+	calls = parse(source, builtins);
+	BOOST_REQUIRE_EQUAL(calls.size(), 1);
+	BOOST_REQUIRE_EQUAL(calls[0].expectedSideEffects.size(), 1);
+	BOOST_REQUIRE_EQUAL(boost::trim_copy(calls[0].expectedSideEffects[0]), "");
+	source = R"(
+		// builtin_returning_call_effect -> 1 # a comment #
+		// ~ hello world
+	)";
+	calls = parse(source, builtins);
+	BOOST_REQUIRE_EQUAL(calls.size(), 1);
+	BOOST_REQUIRE_EQUAL(calls[0].expectedSideEffects.size(), 1);
+	BOOST_REQUIRE_EQUAL(boost::trim_copy(calls[0].expectedSideEffects[0]), "hello world");
+	source = R"(
+		// builtin_returning_call_effect_no_ret -> # another comment #
+		// ~ hello world
+	)";
+	calls = parse(source, builtins);
+	BOOST_REQUIRE_EQUAL(calls.size(), 1);
+	BOOST_REQUIRE_EQUAL(calls[0].expectedSideEffects.size(), 1);
+	BOOST_REQUIRE_EQUAL(boost::trim_copy(calls[0].expectedSideEffects[0]), "hello world");
+	source = R"(
+		// builtin_returning_call_effect_no_ret # another comment #
+		// ~ hello world
+	)";
+	calls = parse(source, builtins);
+	BOOST_REQUIRE_EQUAL(calls.size(), 1);
+	BOOST_REQUIRE_EQUAL(calls[0].expectedSideEffects.size(), 1);
+	BOOST_REQUIRE_EQUAL(boost::trim_copy(calls[0].expectedSideEffects[0]), "hello world");
+	source = R"(
+		// builtin_returning_call_effect_no_ret # another comment #
+		// ~ hello/world
+	)";
+	BOOST_CHECK_THROW(parse(source, builtins), std::exception);
+	source = R"(
+		// builtin_returning_call_effect_no_ret # another comment #
+		// ~ hello//world
+	)";
+	BOOST_CHECK_THROW(parse(source, builtins), std::exception);
 }
 
-BOOST_AUTO_TEST_CASE(nonempty_storage)
+BOOST_AUTO_TEST_CASE(gas)
 {
 	char const* source = R"(
-		// storage: nonempty
+		// f() ->
+		// gas ir: 3245
+		// gas legacy: 5000
+		// gas legacyOptimized: 0
 	)";
 	auto const calls = parse(source);
 	BOOST_REQUIRE_EQUAL(calls.size(), 1);
-	BOOST_CHECK(calls.at(0).kind == FunctionCall::Kind::Storage);
-	BOOST_CHECK(calls.at(0).expectations.result.front().rawBytes == bytes(1, 1));
+	BOOST_REQUIRE_EQUAL(calls[0].expectations.failure, false);
+	BOOST_TEST(calls[0].expectations.gasUsedExcludingCode == (std::map<std::string, u256>{
+		{"ir", 3245},
+		{"legacy", 5000},
+		{"legacyOptimized", 0},
+	}));
+	BOOST_TEST(calls[0].expectations.gasUsedForCodeDeposit == (std::map<std::string, u256>{
+		{"ir", 0},
+		{"legacy", 0},
+		{"legacyOptimized", 0},
+	}));
+}
+
+BOOST_AUTO_TEST_CASE(gas_before_call)
+{
+	char const* source = R"(
+		// gas ir: 3245
+		// f() ->
+	)";
+	BOOST_REQUIRE_THROW(parse(source), TestParserError);
+}
+
+BOOST_AUTO_TEST_CASE(gas_invalid_run_type)
+{
+	char const* source = R"(
+		// f() ->
+		// gas ir: 3245
+		// gas experimental: 5000
+	)";
+	BOOST_REQUIRE_THROW(parse(source), TestParserError);
+}
+
+BOOST_AUTO_TEST_CASE(gas_duplicate_run_type)
+{
+	char const* source = R"(
+		// f() ->
+		// gas ir: 3245
+		// gas ir: 3245
+	)";
+	BOOST_REQUIRE_THROW(parse(source), TestParserError);
+}
+
+BOOST_AUTO_TEST_CASE(gas_with_code_deposit_cost)
+{
+	char const* source = R"(
+		// f() ->
+		// gas legacyOptimized code: 1
+		// gas ir: 13000
+		// gas irOptimized: 6000
+		// gas irOptimized code: 666
+		// gas legacy code: 0
+		// gas legacyOptimized: 1
+	)";
+	auto const calls = parse(source);
+	BOOST_REQUIRE_EQUAL(calls.size(), 1);
+	BOOST_REQUIRE_EQUAL(calls[0].expectations.failure, false);
+	BOOST_TEST(calls[0].expectations.gasUsedExcludingCode == (std::map<std::string, u256>{
+		{"ir", 13000},
+		{"irOptimized", 6000},
+		{"legacy", 0},
+		{"legacyOptimized", 1},
+	}));
+	BOOST_TEST(calls[0].expectations.gasUsedForCodeDeposit == (std::map<std::string, u256>{
+		{"ir", 0},
+		{"irOptimized", 666},
+		{"legacy", 0},
+		{"legacyOptimized", 1},
+	}));
+}
+
+BOOST_AUTO_TEST_CASE(gas_with_code_deposit_cost_invalid_suffix)
+{
+	char const* source = R"(
+		// f() ->
+		// gas ir data: 3245
+	)";
+	BOOST_REQUIRE_THROW(parse(source), TestParserError);
+}
+
+BOOST_AUTO_TEST_CASE(gas_with_code_deposit_cost_tokens_after_suffix)
+{
+	char const* source = R"(
+		// f() ->
+		// gas ir code code: 3245
+	)";
+	BOOST_REQUIRE_THROW(parse(source), TestParserError);
+}
+
+BOOST_AUTO_TEST_CASE(gas_with_code_deposit_cost_double_code_gas)
+{
+	char const* source = R"(
+		// f() ->
+		// gas ir: 3245
+		// gas ir code: 1
+		// gas ir code: 1
+	)";
+	BOOST_REQUIRE_THROW(parse(source), TestParserError);
+}
+
+BOOST_AUTO_TEST_CASE(gas_with_code_deposit_cost_negative_non_code_cost)
+{
+	// NOTE: This arrangement is unlikely but may still be possible due to refunds.
+	// We'll deal with it when we actually have a test case like that.
+	char const* source = R"(
+		// f() ->
+		// gas ir: -10
+		// gas ir code: 20
+	)";
+	BOOST_REQUIRE_THROW(parse(source), TestParserError);
+}
+
+BOOST_AUTO_TEST_CASE(gas_with_code_deposit_cost_negative_total_cost)
+{
+	char const* source = R"(
+		// f() ->
+		// gas ir: -30
+		// gas ir code: 20
+	)";
+	BOOST_REQUIRE_THROW(parse(source), TestParserError);
+}
+
+BOOST_AUTO_TEST_CASE(gas_with_code_deposit_cost_negative_code_cost)
+{
+	char const* source = R"(
+		// f() ->
+		// gas ir: 10
+		// gas ir code: -10
+	)";
+	BOOST_REQUIRE_THROW(parse(source), TestParserError);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

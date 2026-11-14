@@ -25,8 +25,5 @@ contract C {
         return x.s.a;
     }
 }
-
-// ====
-// compileViaYul: false
 // ----
 // f() -> 42, 23, 34, 42, 42

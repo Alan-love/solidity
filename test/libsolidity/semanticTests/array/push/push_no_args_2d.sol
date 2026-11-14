@@ -24,15 +24,21 @@ contract C {
 		array2d.push().push() = value;
 	}
 }
-// ====
-// compileViaYul: also
 // ----
 // l() -> 0
 // f(uint256,uint256): 42, 64 ->
+// gas irOptimized: 112285
+// gas legacy: 107925
+// gas legacyOptimized: 101896
+// gas ssaCFGOptimized: 112279
 // l() -> 1
 // ll(uint256): 0 -> 43
 // a(uint256,uint256): 0, 42 -> 64
 // f(uint256,uint256): 84, 128 ->
+// gas irOptimized: 118705
+// gas legacy: 109977
+// gas legacyOptimized: 98446
+// gas ssaCFGOptimized: 118699
 // l() -> 2
 // ll(uint256): 1 -> 85
 // a(uint256,uint256): 0, 42 -> 64

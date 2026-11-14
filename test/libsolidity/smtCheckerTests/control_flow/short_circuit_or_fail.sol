@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract c {
 	uint x;
 	function f() internal returns (uint) {
@@ -14,5 +12,10 @@ contract c {
 		return b;
 	}
 }
+// ====
+// SMTEngine: all
+// SMTIgnoreCex: no
 // ----
-// Warning 6328: (225-235): CHC: Assertion violation happens here.\nCounterexample:\nx = 1\n\n = false\n\nTransaction trace:\nconstructor()\nState: x = 0\ng()
+// Warning 6328: (192-202): CHC: Assertion violation happens here.\nCounterexample:\nx = 1\n = false\nb = true\n\nTransaction trace:\nc.constructor()\nState: x = 0\nc.g()\n    c.f() -- internal call\n    c.f() -- internal call
+// Info 1391: CHC: 2 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

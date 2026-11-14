@@ -1,8 +1,8 @@
-pragma experimental SMTChecker;
 function f()pure {
 	ufixed a = uint64(1) + ufixed(2);
 }
+// ====
+// SMTEngine: all
 // ----
-// Warning 2072: (52-60): Unused local variable.
-// Warning 6660: (32-87): Model checker analysis was not possible because file level functions are not supported.
-// Warning 6660: (32-87): Model checker analysis was not possible because file level functions are not supported.
+// Warning 2072: (20-28): Unused local variable.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

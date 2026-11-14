@@ -1,0 +1,14 @@
+Warning: CHC: Assertion violation happens here.
+Counterexample:
+
+x = 0
+
+Transaction trace:
+test.constructor()
+test.f(0)
+ --> input.sol:5:3:
+  |
+5 | 		assert(x > 0);
+  | 		^^^^^^^^^^^^^
+
+Warning: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

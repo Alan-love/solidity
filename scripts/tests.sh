@@ -30,19 +30,22 @@ set -e
 
 REPO_ROOT="$(dirname "$0")/.."
 SOLIDITY_BUILD_DIR="${SOLIDITY_BUILD_DIR:-${REPO_ROOT}/build}"
+IFS=" " read -r -a SMT_FLAGS <<< "$SMT_FLAGS"
 
+# shellcheck source=scripts/common.sh
 source "${REPO_ROOT}/scripts/common.sh"
 
-WORKDIR=`mktemp -d`
+WORKDIR=$(mktemp -d)
 CMDLINE_PID=
 
-cleanup() {
+function cleanup
+{
     # ensure failing commands don't cause termination during cleanup (especially within safe_kill)
     set +e
 
     if [[ -n "$CMDLINE_PID" ]]
     then
-        safe_kill $CMDLINE_PID "Commandline tests"
+        safe_kill "$CMDLINE_PID" "Commandline tests"
     fi
 
     echo "Cleaning up working directory ${WORKDIR} ..."
@@ -50,17 +53,35 @@ cleanup() {
 }
 trap cleanup INT TERM
 
-if [ "$1" = --junit_report ]
-then
-    if [ -z "$2" ]
-    then
-        echo "Usage: $0 [--junit_report <report_directory>]"
-        exit 1
-    fi
-    log_directory="$2"
-else
-    log_directory=""
-fi
+log_directory=""
+no_smt=""
+while [[ $# -gt 0 ]]
+do
+    case "$1" in
+        --junit_report)
+            if [ -z "$2" ]
+            then
+                echo "Usage: $0 [--junit_report <report_directory>] [--no-smt]"
+                exit 1
+            else
+                log_directory="$2"
+            fi
+            shift
+            shift
+            ;;
+        --no-smt)
+            no_smt="--no-smt"
+            SMT_FLAGS+=(--no-smt)
+            shift
+            ;;
+        *)
+            echo "Usage: $0 [--junit_report <report_directory>] [--no-smt]"
+            exit 1
+    esac
+done
+
+printTask "Testing Python scripts..."
+"$REPO_ROOT/test/pyscriptTests.py"
 
 printTask "Running commandline tests..."
 # Only run in parallel if this is run on CI infrastructure
@@ -69,7 +90,7 @@ then
     "$REPO_ROOT/test/cmdlineTests.sh" &
     CMDLINE_PID=$!
 else
-    if ! $REPO_ROOT/test/cmdlineTests.sh
+    if ! "$REPO_ROOT/test/cmdlineTests.sh" "$no_smt"
     then
         printError "Commandline tests FAILED"
         exit 1
@@ -77,56 +98,38 @@ else
 fi
 
 
-EVM_VERSIONS="homestead byzantium"
-
-if [ -z "$CI" ]
-then
-    EVM_VERSIONS+=" constantinople petersburg istanbul"
-fi
-
-# And then run the Solidity unit-tests in the matrix combination of optimizer / no optimizer
-# and homestead / byzantium VM
+CURRENT_EVM_VERSION="osaka"
+# Run the Solidity unit-tests in the matrix combination of optimizer / no optimizer
 for optimize in "" "--optimize"
 do
-    for vm in $EVM_VERSIONS
+    for abiv1 in "no" "yes"
     do
-        FORCE_ABIV2_RUNS="no"
-        if [[ "$vm" == "istanbul" ]]
+        force_abiv1_flag=()
+        if [[ "$abiv1" == "yes" ]]
         then
-            FORCE_ABIV2_RUNS="no yes" # run both in istanbul
+            force_abiv1_flag=(--abiencoderv1)
         fi
-        for abiv2 in $FORCE_ABIV2_RUNS
-        do
-            force_abiv2_flag=""
-            if [[ "$abiv2" == "yes" ]]
+        printTask "--> Running tests using $optimize --evm-version $CURRENT_EVM_VERSION ${force_abiv1_flag[*]}..."
+
+        log=()
+        if [ -n "$log_directory" ]
+        then
+            if [ -n "$optimize" ]
             then
-                force_abiv2_flag="--abiencoderv2"
+                log+=("--logger=JUNIT,error,$log_directory/opt_$CURRENT_EVM_VERSION.xml")
+            else
+                log+=("--logger=JUNIT,error,$log_directory/noopt_$CURRENT_EVM_VERSION.xml")
             fi
-            printTask "--> Running tests using "$optimize" --evm-version "$vm" $force_abiv2_flag..."
+        fi
 
-            log=""
-            if [ -n "$log_directory" ]
-            then
-                if [ -n "$optimize" ]
-                then
-                    log=--logger=JUNIT,error,$log_directory/opt_$vm.xml
-                else
-                    log=--logger=JUNIT,error,$log_directory/noopt_$vm.xml
-                fi
-            fi
+        set +e
+        "${SOLIDITY_BUILD_DIR}"/test/soltest --show-progress "${log[@]}" -- --testpath "$REPO_ROOT"/test "$optimize" --evm-version "$CURRENT_EVM_VERSION" "${SMT_FLAGS[@]}" "${force_abiv1_flag[@]}"
 
-            EWASM_ARGS=""
-            [ "${vm}" = "byzantium" ] && [ "${optimize}" = "" ] && EWASM_ARGS="--ewasm"
+        if test "0" -ne "$?"; then
+            exit 1
+        fi
+        set -e
 
-            set +e
-            "${SOLIDITY_BUILD_DIR}"/test/soltest --show-progress $log -- ${EWASM_ARGS} --testpath "$REPO_ROOT"/test "$optimize" --evm-version "$vm" $SMT_FLAGS $force_abiv2_flag
-
-            if test "0" -ne "$?"; then
-                exit 1
-            fi
-            set -e
-
-        done
     done
 done
 

@@ -2,8 +2,7 @@
   "absolutePath": "a",
   "id": 11,
   "nodeType": "SourceUnit",
-  "nodes":
-  [
+  "nodes": [
     {
       "abstract": false,
       "baseContracts": [],
@@ -11,29 +10,28 @@
       "contractKind": "contract",
       "id": 10,
       "name": "C",
+      "nameLocation": "9:1:1",
       "nodeType": "ContractDefinition",
-      "nodes":
-      [
+      "nodes": [
         {
           "constant": false,
           "id": 3,
           "mutability": "immutable",
           "name": "a",
+          "nameLocation": "39:1:1",
           "nodeType": "VariableDeclaration",
           "src": "17:27:1",
           "stateVariable": false,
           "storageLocation": "default",
           "typeDescriptions": {},
-          "typeName":
-          {
+          "typeName": {
             "id": 1,
             "name": "uint",
             "nodeType": "ElementaryTypeName",
             "src": "17:4:1",
             "typeDescriptions": {}
           },
-          "value":
-          {
+          "value": {
             "hexValue": "34",
             "id": 2,
             "kind": "number",
@@ -49,21 +47,20 @@
           "id": 6,
           "mutability": "constant",
           "name": "b",
+          "nameLocation": "71:1:1",
           "nodeType": "VariableDeclaration",
           "src": "50:26:1",
           "stateVariable": false,
           "storageLocation": "default",
           "typeDescriptions": {},
-          "typeName":
-          {
+          "typeName": {
             "id": 4,
             "name": "uint",
             "nodeType": "ElementaryTypeName",
             "src": "50:4:1",
             "typeDescriptions": {}
           },
-          "value":
-          {
+          "value": {
             "hexValue": "32",
             "id": 5,
             "kind": "number",
@@ -79,21 +76,20 @@
           "id": 9,
           "mutability": "mutable",
           "name": "c",
+          "nameLocation": "94:1:1",
           "nodeType": "VariableDeclaration",
           "src": "82:17:1",
           "stateVariable": false,
           "storageLocation": "default",
           "typeDescriptions": {},
-          "typeName":
-          {
+          "typeName": {
             "id": 7,
             "name": "uint",
             "nodeType": "ElementaryTypeName",
             "src": "82:4:1",
             "typeDescriptions": {}
           },
-          "value":
-          {
+          "value": {
             "hexValue": "33",
             "id": 8,
             "kind": "number",
@@ -105,7 +101,9 @@
           "visibility": "public"
         }
       ],
-      "src": "0:102:1"
+      "src": "0:102:1",
+      "usedErrors": [],
+      "usedEvents": []
     }
   ],
   "src": "0:103:1"

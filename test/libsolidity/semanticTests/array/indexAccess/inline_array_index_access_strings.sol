@@ -9,7 +9,6 @@ contract C {
         tester = f();
     }
 }
-
 // ----
 // test() ->
 // tester() -> 0x20, 0x3, "abc"

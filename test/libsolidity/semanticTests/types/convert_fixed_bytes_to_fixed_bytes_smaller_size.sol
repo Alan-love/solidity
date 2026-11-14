@@ -3,8 +3,5 @@ contract Test {
         return bytes2(input);
     }
 }
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // bytesToBytes(bytes4): "abcd" -> "ab"

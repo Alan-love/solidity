@@ -51,10 +51,19 @@ template <class S> S modWorkaround(S const& _a, S const& _b)
 }
 
 // This works around a bug fixed with Boost 1.64.
-// https://www.boost.org/doc/libs/1_68_0/libs/multiprecision/doc/html/boost_multiprecision/map/hist.html#boost_multiprecision.map.hist.multiprecision_2_3_1_boost_1_64
+// https://www.boost.org/doc/libs/release/libs/multiprecision/doc/html/boost_multiprecision/map/hist.html#boost_multiprecision.map.hist.multiprecision_2_3_1_boost_1_64
 template <class S> S shlWorkaround(S const& _x, unsigned _amount)
 {
 	return u256((bigint(_x) << _amount) & u256(-1));
+}
+
+/// @returns k if _x == 2**k, nullopt otherwise
+inline std::optional<size_t> binaryLogarithm(u256 const& _x)
+{
+	if (_x == 0)
+		return std::nullopt;
+	size_t msb = boost::multiprecision::msb(_x);
+	return (u256(1) << msb) == _x ? std::make_optional(msb) : std::nullopt;
 }
 
 // simplificationRuleList below was split up into parts to prevent
@@ -239,8 +248,8 @@ std::vector<SimplificationRule<Pattern>> simplificationRuleListPart4(
 
 template <class Pattern>
 std::vector<SimplificationRule<Pattern>> simplificationRuleListPart4_5(
-	Pattern,
-	Pattern,
+	Pattern A,
+	Pattern B,
 	Pattern,
 	Pattern X,
 	Pattern Y
@@ -257,22 +266,49 @@ std::vector<SimplificationRule<Pattern>> simplificationRuleListPart4_5(
 		{Builtins::OR(Y, Builtins::OR(X, Y)), [=]{ return Builtins::OR(X, Y); }},
 		{Builtins::OR(Builtins::OR(Y, X), Y), [=]{ return Builtins::OR(Y, X); }},
 		{Builtins::OR(Y, Builtins::OR(Y, X)), [=]{ return Builtins::OR(Y, X); }},
+		{Builtins::SIGNEXTEND(X, Builtins::SIGNEXTEND(X, Y)), [=]() { return Builtins::SIGNEXTEND(X, Y); }},
+		{Builtins::SIGNEXTEND(A, Builtins::SIGNEXTEND(B, X)), [=]() {
+			return Builtins::SIGNEXTEND(A.d() < B.d() ? A.d() : B.d(), X);
+		}},
 	};
 }
 
 template <class Pattern>
 std::vector<SimplificationRule<Pattern>> simplificationRuleListPart5(
+	bool _forYulOptimizer,
 	Pattern A,
-	Pattern,
+	Pattern B,
 	Pattern,
 	Pattern X,
-	Pattern
+	Pattern Y
 )
 {
 	using Word = typename Pattern::Word;
 	using Builtins = typename Pattern::Builtins;
 
 	std::vector<SimplificationRule<Pattern>> rules;
+
+	// The libevmasm optimizer does not support rules resulting in opcodes with more than two arguments.
+	if (_forYulOptimizer)
+	{
+		// Replace MOD(MUL(X, Y), A) with MULMOD(X, Y, A) iff A=2**N
+		rules.push_back({
+			Builtins::MOD(Builtins::MUL(X, Y), A),
+			[=]() -> Pattern { return Builtins::MULMOD(X, Y, A); },
+			[=] {
+				return A.d() > 0 && ((A.d() & (A.d() - 1)) == 0);
+			}
+		});
+
+		// Replace MOD(ADD(X, Y), A) with ADDMOD(X, Y, A) iff A=2**N
+		rules.push_back({
+			Builtins::MOD(Builtins::ADD(X, Y), A),
+			[=]() -> Pattern { return Builtins::ADDMOD(X, Y, A); },
+			[=] {
+				return A.d() > 0 && ((A.d() & (A.d() - 1)) == 0);
+			}
+		});
+	}
 
 	// Replace MOD X, <power-of-two> with AND X, <power-of-two> - 1
 	for (size_t i = 0; i < Pattern::WordSize; ++i)
@@ -303,6 +339,31 @@ std::vector<SimplificationRule<Pattern>> simplificationRuleListPart5(
 		Builtins::BYTE(A, X),
 		[=]() -> Pattern { return Word(0); },
 		[=]() { return A.d() >= Pattern::WordSize / 8; }
+	});
+
+	// Replace SIGNEXTEND(A, X), A >= 31 with ID
+	rules.push_back({
+		Builtins::SIGNEXTEND(A, X),
+		[=]() -> Pattern { return X; },
+		[=]() { return A.d() >= Pattern::WordSize / 8 - 1; }
+	});
+	rules.push_back({
+		Builtins::AND(A, Builtins::SIGNEXTEND(B, X)),
+		[=]() -> Pattern { return Builtins::AND(A, X); },
+		[=]() {
+			return
+				B.d() < Pattern::WordSize / 8 - 1 &&
+				(A.d() & ((u256(1) << static_cast<size_t>((B.d() + 1) * 8)) - 1)) == A.d();
+		}
+	});
+	rules.push_back({
+		Builtins::AND(Builtins::SIGNEXTEND(B, X), A),
+		[=]() -> Pattern { return Builtins::AND(A, X); },
+		[=]() {
+			return
+				B.d() < Pattern::WordSize / 8 - 1 &&
+				(A.d() & ((u256(1) << static_cast<size_t>((B.d() + 1) * 8)) - 1)) == A.d();
+		}
 	});
 
 	for (auto instr: {
@@ -365,6 +426,11 @@ std::vector<SimplificationRule<Pattern>> simplificationRuleListPart6(
 		[=]() -> Pattern { return Builtins::EQ(X, Y); }
 	});
 
+	rules.push_back({
+		Builtins::ISZERO(Builtins::SUB(X, Y)),
+		[=]() -> Pattern { return Builtins::EQ(X, Y); }
+	});
+
 	return rules;
 }
 
@@ -374,7 +440,8 @@ std::vector<SimplificationRule<Pattern>> simplificationRuleListPart7(
 	Pattern B,
 	Pattern,
 	Pattern X,
-	Pattern Y
+	Pattern Y,
+	Pattern Z
 )
 {
 	using Word = typename Pattern::Word;
@@ -502,6 +569,23 @@ std::vector<SimplificationRule<Pattern>> simplificationRuleListPart7(
 		});
 	}
 
+	// Combine alternating AND/OR/AND with constant,
+	// AND(OR(AND(X, A), Y), B) -> OR(AND(X, A & B), AND(Y, B))
+	// Many versions due to commutativity.
+	for (auto const& inner: {Builtins::AND(X, A), Builtins::AND(A, X)})
+		for (auto const& second: {Builtins::OR(inner, Y), Builtins::OR(Y, inner)})
+		{
+			// We might swap X and Y but this is not an issue anymore.
+			rules.push_back({
+				Builtins::AND(second, B),
+				[=]() -> Pattern { return Builtins::OR(Builtins::AND(X, A.d() & B.d()), Builtins::AND(Y, B)); }
+			});
+			rules.push_back({
+				Builtins::AND(B, second),
+				[=]() -> Pattern { return Builtins::OR(Builtins::AND(X, A.d() & B.d()), Builtins::AND(Y, B)); }
+			});
+		}
+
 	rules.push_back({
 		// MUL(X, SHL(Y, 1)) -> SHL(Y, X)
 		Builtins::MUL(X, Builtins::SHL(Y, Word(1))),
@@ -547,6 +631,12 @@ std::vector<SimplificationRule<Pattern>> simplificationRuleListPart7(
 	});
 
 	rules.push_back({
+		// AND(SHL(Z, X), SHL(Z, Y)) -> SHL(Z, AND(X, Y))
+		Builtins::AND(Builtins::SHL(Z, X), Builtins::SHL(Z, Y)),
+		[=]() -> Pattern { return Builtins::SHL(Z, Builtins::AND(X, Y)); }
+	});
+
+	rules.push_back({
 		Builtins::BYTE(A, Builtins::SHL(B, X)),
 		[=]() -> Pattern { return Builtins::BYTE(A.d() + B.d() / 8, X); },
 		[=] { return B.d() % 8 == 0 && A.d() <= 32 && B.d() <= 256; }
@@ -563,6 +653,24 @@ std::vector<SimplificationRule<Pattern>> simplificationRuleListPart7(
 		[=]() -> Pattern { return Builtins::BYTE(A.d() - B.d() / 8, X); },
 		[=] {
 			return B.d() % 8 == 0 && A.d() < Pattern::WordSize / 8 && B.d() <= Pattern::WordSize && A.d() >= B.d() / 8;
+		}
+	});
+
+	rules.push_back({
+		Builtins::SHL(A, Builtins::SIGNEXTEND(B, X)),
+		[=]() -> Pattern { return Builtins::SIGNEXTEND((A.d() >> 3) + B.d(), Builtins::SHL(A, X)); },
+		[=] { return (A.d() & 7) == 0 && A.d() <= Pattern::WordSize && B.d() <= Pattern::WordSize / 8; }
+	});
+
+	rules.push_back({
+		Builtins::SIGNEXTEND(A, Builtins::SHR(B, X)),
+		[=]() -> Pattern { return Builtins::SAR(B, X); },
+		[=] {
+			return
+				B.d() % 8 == 0 &&
+				B.d() <= Pattern::WordSize &&
+				A.d() <= Pattern::WordSize &&
+				(Pattern::WordSize - B.d()) / 8 == A.d() + 1;
 		}
 	});
 
@@ -603,6 +711,22 @@ std::vector<SimplificationRule<Pattern>> simplificationRuleListPart8(
 			// X - (A + Y) -> (X - Y) + (-A)
 			Builtins::SUB(X, Builtins::ADD(A, Y)),
 			[=]() -> Pattern { return Builtins::ADD(Builtins::SUB(X, Y), 0 - A.d()); }
+		}, {
+			// (X - A) - Y -> (X - Y) - A
+			Builtins::SUB(Builtins::SUB(X, A), Y),
+			[=]() -> Pattern { return Builtins::SUB(Builtins::SUB(X, Y), A); }
+		}, {
+			// (A - X) - Y -> A - (X + Y)
+			Builtins::SUB(Builtins::SUB(A, X), Y),
+			[=]() -> Pattern { return Builtins::SUB(A, Builtins::ADD(X, Y)); }
+		}, {
+			// X - (Y - A) -> (X - Y) + A
+			Builtins::SUB(X, Builtins::SUB(Y, A)),
+			[=]() -> Pattern { return Builtins::ADD(Builtins::SUB(X, Y), A.d()); }
+		}, {
+			// X - (A - Y) -> (X + Y) + (-A)
+			Builtins::SUB(X, Builtins::SUB(A, Y)),
+			[=]() -> Pattern { return Builtins::ADD(Builtins::ADD(X, Y), 0 - A.d()); }
 		}
 	};
 	return rules;
@@ -611,7 +735,7 @@ std::vector<SimplificationRule<Pattern>> simplificationRuleListPart8(
 template<class Pattern>
 std::vector<SimplificationRule<Pattern>> evmRuleList(
 	langutil::EVMVersion _evmVersion,
-	Pattern,
+	Pattern A,
 	Pattern,
 	Pattern,
 	Pattern,
@@ -639,10 +763,27 @@ std::vector<SimplificationRule<Pattern>> evmRuleList(
 		[=]() -> Pattern { return Word(1); }
 	);
 	if (_evmVersion.hasBitwiseShifting())
+	{
 		rules.emplace_back(
 			Builtins::EXP(2, X),
 			[=]() -> Pattern { return Builtins::SHL(X, 1); }
 		);
+		rules.emplace_back(
+			Builtins::MUL(A, X),
+			[=]() -> Pattern { return Builtins::SHL(u256(*binaryLogarithm(A.d())), X); },
+			[=] { return binaryLogarithm(A.d()).has_value(); }
+		);
+		rules.emplace_back(
+			Builtins::MUL(X, A),
+			[=]() -> Pattern { return Builtins::SHL(u256(*binaryLogarithm(A.d())), X); },
+			[=] { return binaryLogarithm(A.d()).has_value(); }
+		);
+		rules.emplace_back(
+			Builtins::DIV(X, A),
+			[=]() -> Pattern { return Builtins::SHR(u256(*binaryLogarithm(A.d())), X); },
+			[=] { return binaryLogarithm(A.d()).has_value(); }
+		);
+	}
 	rules.emplace_back(
 		Builtins::EXP(Word(-1), X),
 		[=]() -> Pattern
@@ -687,9 +828,9 @@ std::vector<SimplificationRule<Pattern>> simplificationRuleList(
 	rules += simplificationRuleListPart3(A, B, C, W, X);
 	rules += simplificationRuleListPart4(A, B, C, W, X);
 	rules += simplificationRuleListPart4_5(A, B, C, W, X);
-	rules += simplificationRuleListPart5(A, B, C, W, X);
+	rules += simplificationRuleListPart5(_evmVersion.has_value(), A, B, C, W, X);
 	rules += simplificationRuleListPart6(A, B, C, W, X);
-	rules += simplificationRuleListPart7(A, B, C, W, X);
+	rules += simplificationRuleListPart7(A, B, C, W, X, Y);
 	rules += simplificationRuleListPart8(A, B, C, W, X);
 
 	if (_evmVersion.has_value())

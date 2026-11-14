@@ -4,7 +4,7 @@ abstract contract D {
 
 
 contract C {
-    D d = D(0x1212);
+    D d = D(address(0x1212));
 
     function f() public returns (uint256) {
         d.g();
@@ -21,10 +21,7 @@ contract C {
         return 7;
     }
 }
-
 // ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // f() -> FAILURE
 // g() -> FAILURE

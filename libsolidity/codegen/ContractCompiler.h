@@ -36,7 +36,7 @@ namespace solidity::frontend
 
 /**
  * Code generator at the contract level. Can be used to generate code for exactly one contract
- * either either in "runtime mode" or "creation mode".
+ * either in "runtime mode" or "creation mode".
  */
 class ContractCompiler: private ASTConstVisitor
 {
@@ -58,7 +58,7 @@ public:
 	);
 	/// Compiles the constructor part of the contract.
 	/// @returns the identifier of the runtime sub-assembly.
-	size_t compileConstructor(
+	evmasm::SubAssemblyID compileConstructor(
 		ContractDefinition const& _contract,
 		std::map<ContractDefinition const*, std::shared_ptr<Compiler const>> const& _otherCompilers
 	);
@@ -73,11 +73,11 @@ private:
 	/// Adds the code that is run at creation time. Should be run after exchanging the run-time context
 	/// with a new and initialized context. Adds the constructor code.
 	/// @returns the identifier of the runtime sub assembly
-	size_t packIntoContractCreator(ContractDefinition const& _contract);
+	evmasm::SubAssemblyID packIntoContractCreator(ContractDefinition const& _contract);
 	/// Appends code that deploys the given contract as a library.
 	/// Will also add code that modifies the contract in memory by injecting the current address
 	/// for the call protector.
-	size_t deployLibrary(ContractDefinition const& _contract);
+	evmasm::SubAssemblyID deployLibrary(ContractDefinition const& _contract);
 	/// Appends state variable initialisation and constructor code.
 	void appendInitAndConstructorCode(ContractDefinition const& _contract);
 	void appendBaseConstructor(FunctionDefinition const& _constructor);
@@ -93,7 +93,7 @@ private:
 		std::map<util::FixedHash<4>, evmasm::AssemblyItem const> const& _entryPoints,
 		std::vector<util::FixedHash<4>> const& _ids,
 		evmasm::AssemblyItem const& _notFoundTag,
-		size_t _runs
+		OptimiserSettings::ExecutionCount _runs
 	);
 	void appendFunctionSelector(ContractDefinition const& _contract);
 	void appendCallValueCheck();
@@ -117,6 +117,7 @@ private:
 	bool visit(Return const& _return) override;
 	bool visit(Throw const& _throw) override;
 	bool visit(EmitStatement const& _emit) override;
+	bool visit(RevertStatement const& _revert) override;
 	bool visit(VariableDeclarationStatement const& _variableDeclarationStatement) override;
 	bool visit(ExpressionStatement const& _expressionStatement) override;
 	bool visit(PlaceholderStatement const&) override;
@@ -134,7 +135,7 @@ private:
 	/// If the default value is complex (needs memory allocation) and @a _provideDefaultValue
 	/// is false, this might be skipped.
 	void appendStackVariableInitialisation(VariableDeclaration const& _variable, bool _provideDefaultValue);
-	void compileExpression(Expression const& _expression, TypePointer const& _targetType = TypePointer());
+	void compileExpression(Expression const& _expression, Type const* _targetType = nullptr);
 
 	/// Frees the variables of a certain scope (to be used when leaving).
 	void popScopedVariables(ASTNode const* _node);

@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract C {
 	struct S {
 		uint x;
@@ -15,4 +13,7 @@ contract C {
 		s1.m[a] = b;
 	}
 }
+// ====
+// SMTEngine: all
 // ----
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

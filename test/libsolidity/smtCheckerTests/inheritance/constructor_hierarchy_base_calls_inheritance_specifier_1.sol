@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract A {
 	uint public x;
 	constructor(uint a) { x = a; }
@@ -31,6 +29,10 @@ contract C is Z(5) {
 		assert(x > 9); // should fail
 	}
 }
+// ====
+// SMTEngine: all
 // ----
-// Warning 4984: (325-332): CHC: Overflow (resulting value larger than 2**256 - 1) happens here.\nCounterexample:\nx = 1\nz = 115792089237316195423570985008687907853269984665640564039457584007913129639935\n\n\nTransaction trace:\nconstructor(115792089237316195423570985008687907853269984665640564039457584007913129639935)
-// Warning 6328: (400-413): CHC: Assertion violation happens here.\nCounterexample:\nx = 6\n\n\n\nTransaction trace:\nconstructor()
+// Warning 4984: (292-299): CHC: Overflow (resulting value larger than 2**256 - 1) happens here.\nCounterexample:\nx = 1\nz = 115792089237316195423570985008687907853269984665640564039457584007913129639935\n\nTransaction trace:\nZ.constructor(115792089237316195423570985008687907853269984665640564039457584007913129639935)
+// Warning 6328: (367-380): CHC: Assertion violation happens here.\nCounterexample:\nx = 6\n\nTransaction trace:\nC.constructor()
+// Info 1391: CHC: 2 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

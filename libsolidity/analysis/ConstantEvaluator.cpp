@@ -26,91 +26,506 @@
 #include <libsolidity/ast/AST.h>
 #include <libsolidity/ast/TypeProvider.h>
 #include <liblangutil/ErrorReporter.h>
+#include <libsolutil/Keccak256.h>
+#include <libsolutil/StringUtils.h>
+#include <libsolutil/FixedHash.h>
 
-using namespace std;
+#include <fmt/format.h>
+
+#include <limits>
+
 using namespace solidity;
 using namespace solidity::frontend;
 using namespace solidity::langutil;
+using namespace solidity::util;
+
+using TypedValue = ConstantEvaluator::TypedValue;
+
+namespace
+{
+
+/// Check whether (_base ** _exp) fits into 4096 bits.
+bool fitsPrecisionExp(bigint const& _base, bigint const& _exp)
+{
+	if (_base == 0)
+		return true;
+
+	solAssert(_base > 0, "");
+
+	std::size_t const bitsMax = 4096;
+
+	std::size_t mostSignificantBaseBit = static_cast<std::size_t>(boost::multiprecision::msb(_base));
+	if (mostSignificantBaseBit == 0) // _base == 1
+		return true;
+	if (mostSignificantBaseBit > bitsMax) // _base >= 2 ^ 4096
+		return false;
+
+	bigint bitsNeeded = _exp * (mostSignificantBaseBit + 1);
+
+	return bitsNeeded <= bitsMax;
+}
+
+/// Checks whether _mantissa * (2 ** _expBase2) fits into 4096 bits.
+bool fitsPrecisionBase2(bigint const& _mantissa, uint32_t _expBase2)
+{
+	return fitsPrecisionBaseX(_mantissa, 1.0, _expBase2);
+}
+
+}
+
+std::optional<rational> ConstantEvaluator::evaluateBinaryOperator(Token _operator, rational const& _left, rational const& _right)
+{
+	bool fractional = _left.denominator() != 1 || _right.denominator() != 1;
+	switch (_operator)
+	{
+	//bit operations will only be enabled for integers and fixed types that resemble integers
+	case Token::BitOr:
+		if (fractional)
+			return std::nullopt;
+		else
+			return _left.numerator() | _right.numerator();
+	case Token::BitXor:
+		if (fractional)
+			return std::nullopt;
+		else
+			return _left.numerator() ^ _right.numerator();
+	case Token::BitAnd:
+		if (fractional)
+			return std::nullopt;
+		else
+			return _left.numerator() & _right.numerator();
+	case Token::Add: return _left + _right;
+	case Token::Sub: return _left - _right;
+	case Token::Mul: return _left * _right;
+	case Token::Div:
+		if (_right == rational(0))
+			return std::nullopt;
+		else
+			return _left / _right;
+	case Token::Mod:
+		if (_right == rational(0))
+			return std::nullopt;
+		else if (fractional)
+		{
+			rational tempValue = _left / _right;
+			return _left - (tempValue.numerator() / tempValue.denominator()) * _right;
+		}
+		else
+			return _left.numerator() % _right.numerator();
+		break;
+	case Token::Exp:
+	{
+		if (_right.denominator() != 1)
+			return std::nullopt;
+		bigint const& exp = _right.numerator();
+
+		// x ** 0 = 1
+		// for 0, 1 and -1 the size of the exponent doesn't have to be restricted
+		if (exp == 0)
+			return 1;
+		else if (_left == 0 || _left == 1)
+			return _left;
+		else if (_left == -1)
+		{
+			bigint isOdd = abs(exp) & bigint(1);
+			return 1 - 2 * isOdd.convert_to<int>();
+		}
+		else
+		{
+			if (abs(exp) > std::numeric_limits<uint32_t>::max())
+				return std::nullopt; // This will need too much memory to represent.
+
+			uint32_t absExp = bigint(abs(exp)).convert_to<uint32_t>();
+
+			if (!fitsPrecisionExp(abs(_left.numerator()), absExp) || !fitsPrecisionExp(abs(_left.denominator()), absExp))
+				return std::nullopt;
+
+			static auto const optimizedPow = [](bigint const& _base, uint32_t _exponent) -> bigint {
+				if (_base == 1)
+					return 1;
+				else if (_base == -1)
+					return 1 - 2 * static_cast<int>(_exponent & 1);
+				else
+					return boost::multiprecision::pow(_base, _exponent);
+			};
+
+			bigint numerator = optimizedPow(_left.numerator(), absExp);
+			bigint denominator = optimizedPow(_left.denominator(), absExp);
+
+			if (exp >= 0)
+				return makeRational(numerator, denominator);
+			else
+				// invert
+				return makeRational(denominator, numerator);
+		}
+		break;
+	}
+	case Token::SHL:
+	{
+		if (fractional)
+			return std::nullopt;
+		else if (_right < 0)
+			return std::nullopt;
+		else if (_right > std::numeric_limits<uint32_t>::max())
+			return std::nullopt;
+		if (_left.numerator() == 0)
+			return 0;
+		else
+		{
+			uint32_t exponent = _right.numerator().convert_to<uint32_t>();
+			if (!fitsPrecisionBase2(abs(_left.numerator()), exponent))
+				return std::nullopt;
+			return _left.numerator() * boost::multiprecision::pow(bigint(2), exponent);
+		}
+		break;
+	}
+	// NOTE: we're using >> (SAR) to denote right shifting. The type of the LValue
+	//       determines the resulting type and the type of shift (SAR or SHR).
+	case Token::SAR:
+	{
+		if (fractional)
+			return std::nullopt;
+		else if (_right < 0)
+			return std::nullopt;
+		else if (_right > std::numeric_limits<uint32_t>::max())
+			return std::nullopt;
+		if (_left.numerator() == 0)
+			return 0;
+		else
+		{
+			uint32_t exponent = _right.numerator().convert_to<uint32_t>();
+			if (exponent > boost::multiprecision::msb(boost::multiprecision::abs(_left.numerator())))
+				return _left.numerator() < 0 ? -1 : 0;
+			else
+			{
+				if (_left.numerator() < 0)
+					// Add 1 to the negative value before dividing to get a result that is strictly too large,
+					// then subtract 1 afterwards to round towards negative infinity.
+					// This is the same algorithm as used in ExpressionCompiler::appendShiftOperatorCode(...).
+					// To see this note that for negative x, xor(x,all_ones) = (-x-1) and
+					// therefore xor(div(xor(x,all_ones), exp(2, shift_amount)), all_ones) is
+					// -(-x - 1) / 2^shift_amount - 1, which is the same as
+					// (x + 1) / 2^shift_amount - 1.
+					return rational((_left.numerator() + 1) / boost::multiprecision::pow(bigint(2), exponent) - bigint(1), 1);
+				else
+					return rational(_left.numerator() / boost::multiprecision::pow(bigint(2), exponent), 1);
+			}
+		}
+		break;
+	}
+	default:
+		return std::nullopt;
+	}
+}
+
+std::optional<rational> ConstantEvaluator::evaluateUnaryOperator(Token _operator, rational const& _input)
+{
+	switch (_operator)
+	{
+	case Token::BitNot:
+		if (_input.denominator() != 1)
+			return std::nullopt;
+		else
+			return ~_input.numerator();
+	case Token::Sub:
+		return -_input;
+	default:
+		return std::nullopt;
+	}
+}
+
+namespace
+{
+
+TypedValue convertType(rational const& _value, Type const& _type)
+{
+	if (_type.category() == Type::Category::RationalNumber)
+		return TypedValue{TypeProvider::rationalNumber(_value), _value};
+	else if (auto const* integerType = dynamic_cast<IntegerType const*>(&_type))
+	{
+		if (_value > integerType->maxValue() || _value < integerType->minValue())
+			return TypedValue{};
+
+		return TypedValue{&_type, _value.numerator() / _value.denominator()};
+	}
+	else
+		return TypedValue{};
+}
+
+TypedValue convertType(std::string const& _value, Type const& _type)
+{
+	using enum Type::Category;
+	if (_type.category() != StringLiteral && _type.category() != Array)
+		return TypedValue{};
+	if (_type.category() == Array && !dynamic_cast<ArrayType const*>(&_type)->isByteArrayOrString())
+		return TypedValue{};
+
+	return TypedValue{&_type, _value};
+}
+
+TypedValue convertType(TypedValue const& _value, Type const& _type)
+{
+	return std::visit(util::GenericVisitor{
+		[&](std::string const& value) {
+			return convertType(value, _type);
+		},
+		[&](rational const& value) {
+			return convertType(value, _type);
+		},
+		[&](std::monostate const&) {
+			return TypedValue{};
+		}
+	}, _value.value());
+}
+
+TypedValue constantToTypedValue(Type const& _type)
+{
+	if (_type.category() == Type::Category::RationalNumber)
+		return TypedValue{&_type, dynamic_cast<RationalNumberType const&>(_type).value()};
+	else if (_type.category() == Type::Category::StringLiteral)
+		return TypedValue{&_type, dynamic_cast<StringLiteralType const&>(_type).value()};
+
+	return TypedValue{};
+}
+
+}
+
+TypedValue ConstantEvaluator::evaluate(
+	langutil::ErrorReporter& _errorReporter,
+	Expression const& _expr
+)
+{
+	return ConstantEvaluator{_errorReporter}.evaluate(_expr);
+}
+
+TypedValue ConstantEvaluator::tryEvaluate(Expression const& _expr)
+{
+	ErrorList errorList;
+	ErrorReporter errorReporter(errorList);
+	try
+	{
+		return ConstantEvaluator{errorReporter}.evaluate(_expr);
+	}
+	catch (FatalError const&)
+	{
+		return TypedValue{};
+	}
+}
+
+
+TypedValue ConstantEvaluator::evaluate(ASTNode const& _node)
+{
+	if (!m_values.count(&_node))
+	{
+		if (auto const* varDecl = dynamic_cast<VariableDeclaration const*>(&_node))
+		{
+			solAssert(varDecl->isConstant(), "");
+			// In some circumstances, we do not yet have a type for the variable.
+			if (!varDecl->value() || !varDecl->type())
+				m_values[&_node] = TypedValue{};
+			else
+			{
+				m_depth++;
+				if (m_depth > 32)
+					m_errorReporter.fatalTypeError(
+						5210_error,
+						varDecl->location(),
+						"Cyclic constant definition (or maximum recursion depth exhausted)."
+					);
+				m_values[&_node] = convertType(evaluate(*varDecl->value()), *varDecl->type());
+				m_depth--;
+			}
+		}
+		else if (auto const* expression = dynamic_cast<Expression const*>(&_node))
+		{
+			expression->accept(*this);
+			if (!m_values.count(&_node))
+				m_values[&_node] = TypedValue{};
+		}
+	}
+	return m_values.at(&_node);
+}
 
 void ConstantEvaluator::endVisit(UnaryOperation const& _operation)
 {
-	auto sub = type(_operation.subExpression());
-	if (sub)
-		setType(_operation, sub->unaryOperatorResult(_operation.getOperator()));
+	TypedValue value = evaluate(_operation.subExpression());
+	if (value.isEmpty())
+		return;
+
+	Type const* resultType = value.type().unaryOperatorResult(_operation.getOperator());
+	if (!resultType)
+		return;
+	value = convertType(value, *resultType);
+	if (!value.isRational())
+		return;
+
+	if (std::optional<rational> result = evaluateUnaryOperator(_operation.getOperator(), value.asRational()))
+	{
+		TypedValue convertedValue = convertType(*result, *resultType);
+		if (convertedValue.isEmpty())
+			m_errorReporter.fatalTypeError(
+				3667_error,
+				_operation.location(),
+				"Arithmetic error when computing constant value."
+			);
+		m_values[&_operation] = convertedValue;
+	}
 }
 
 void ConstantEvaluator::endVisit(BinaryOperation const& _operation)
 {
-	auto left = type(_operation.leftExpression());
-	auto right = type(_operation.rightExpression());
-	if (left && right)
+	TypedValue left = evaluate(_operation.leftExpression());
+	TypedValue right = evaluate(_operation.rightExpression());
+	if (left.isEmpty() || right.isEmpty())
+		return;
+
+	// If this is implemented in the future: Comparison operators have a "binaryOperatorResult"
+	// that is non-bool, but the result has to be bool.
+	if (TokenTraits::isCompareOp(_operation.getOperator()))
+		return;
+
+	Type const* resultType = left.type().binaryOperatorResult(_operation.getOperator(), &right.type());
+	if (!resultType)
 	{
-		TypePointer commonType = left->binaryOperatorResult(_operation.getOperator(), right);
-		if (!commonType)
-			m_errorReporter.fatalTypeError(
-				6020_error,
-				_operation.location(),
-				"Operator " +
-				string(TokenTraits::toString(_operation.getOperator())) +
-				" not compatible with types " +
-				left->toString() +
-				" and " +
-				right->toString()
+		m_errorReporter.fatalTypeError(
+			6020_error,
+			_operation.location(),
+			"Operator " +
+			std::string(TokenTraits::toString(_operation.getOperator())) +
+			" not compatible with types " +
+			left.type().toString() +
+			" and " +
+			right.type().toString()
 			);
-		setType(
-			_operation,
-			TokenTraits::isCompareOp(_operation.getOperator()) ?
-			TypeProvider::boolean() :
-			commonType
-		);
+		return;
+	}
+
+	left = convertType(left, *resultType);
+	right = convertType(right, *resultType);
+	if (
+		!left.isRational() ||
+		!right.isRational()
+	)
+		return;
+
+	if (std::optional<rational> value = evaluateBinaryOperator(
+		_operation.getOperator(),
+		left.asRational(),
+		right.asRational()
+	))
+	{
+		TypedValue convertedValue = convertType(*value, *resultType);
+		if (convertedValue.isEmpty())
+			m_errorReporter.fatalTypeError(
+				2643_error,
+				_operation.location(),
+				"Arithmetic error when computing constant value."
+			);
+		m_values[&_operation] = convertedValue;
 	}
 }
 
 void ConstantEvaluator::endVisit(Literal const& _literal)
 {
-	setType(_literal, TypeProvider::forLiteral(_literal));
+	if (Type const* literalType = TypeProvider::forLiteral(_literal))
+		m_values[&_literal] = constantToTypedValue(*literalType);
 }
 
 void ConstantEvaluator::endVisit(Identifier const& _identifier)
 {
 	VariableDeclaration const* variableDeclaration = dynamic_cast<VariableDeclaration const*>(_identifier.annotation().referencedDeclaration);
-	if (!variableDeclaration)
-		return;
-	if (!variableDeclaration->isConstant())
-		return;
-
-	ASTPointer<Expression> const& value = variableDeclaration->value();
-	if (!value)
-		return;
-	else if (!m_types->count(value.get()))
-	{
-		if (m_depth > 32)
-			m_errorReporter.fatalTypeError(5210_error, _identifier.location(), "Cyclic constant definition (or maximum recursion depth exhausted).");
-		ConstantEvaluator(m_errorReporter, m_depth + 1, m_types).evaluate(*value);
-	}
-
-	setType(_identifier, type(*value));
+	if (variableDeclaration && variableDeclaration->isConstant())
+		m_values[&_identifier] = evaluate(*variableDeclaration);
 }
 
 void ConstantEvaluator::endVisit(TupleExpression const& _tuple)
 {
 	if (!_tuple.isInlineArray() && _tuple.components().size() == 1)
-		setType(_tuple, type(*_tuple.components().front()));
+		m_values[&_tuple] = evaluate(*_tuple.components().front());
 }
 
-void ConstantEvaluator::setType(ASTNode const& _node, TypePointer const& _type)
+void ConstantEvaluator::endVisit(FunctionCall const& _functionCall)
 {
-	if (_type && _type->category() == Type::Category::RationalNumber)
-		(*m_types)[&_node] = _type;
+	auto const* builtinFunction = dynamic_cast<MagicVariableDeclaration const*>(ASTNode::referencedDeclaration(_functionCall.expression()));
+	if (!builtinFunction)
+		return;
+
+	auto const* functionType = builtinFunction->functionType(true);
+	solAssert(functionType);
+	switch (functionType->kind())
+	{
+		case FunctionType::Kind::ERC7201:
+		{
+			if (_functionCall.arguments().size() != 1)
+			{
+				m_errorReporter.typeError(
+					8248_error,
+					_functionCall.location(),
+					fmt::format(
+						"erc7201 function expects 1 parameter, but {} were given.",
+						_functionCall.arguments().size()
+					)
+				);
+				return;
+			}
+			auto stringArg = evaluate(*(_functionCall.arguments()[0].get()));
+			if (!stringArg.isString())
+			{
+				m_errorReporter.typeError(
+					9796_error,
+					_functionCall.arguments()[0]->location(),
+					"Invalid argument type for erc7201 function. Expected literal or constant string."
+				);
+				return;
+			}
+
+			h256 innerKeccak = keccak256(stringArg.asString());
+			h256 outerKeccak = keccak256(h256(u256(innerKeccak) - 1));
+			outerKeccak.data()[31] = 0;
+			u256 slot = outerKeccak;
+			solAssert(functionType->returnParameterTypes().size() == 1);
+			m_values[&_functionCall] = TypedValue{functionType->returnParameterTypes()[0], rational{slot}};
+			break;
+		}
+		default:
+			break;
+	}
 }
 
-TypePointer ConstantEvaluator::type(ASTNode const& _node)
+TypedValue::TypedValue(Type const* _type, TypedValue::Value _value): m_type(_type), m_value(std::move(_value))
 {
-	return (*m_types)[&_node];
+	std::visit(util::GenericVisitor{
+		[&](std::string const&) {
+			solAssert(
+				dynamic_cast<StringLiteralType const*>(m_type) ||
+				(dynamic_cast<ArrayType const*>(m_type) && dynamic_cast<ArrayType const*>(m_type)->isByteArrayOrString())
+			);
+		},
+		[&](rational const& _rationalValue) {
+			solAssert(dynamic_cast<RationalNumberType const*>(m_type) || dynamic_cast<IntegerType const*>(m_type));
+			if (auto const* integerType = dynamic_cast<IntegerType const*>(m_type))
+				solAssert(integerType->minValue() <= _rationalValue && _rationalValue <= integerType->maxValue() && _rationalValue.denominator() == 1);
+		},
+		[&](std::monostate const&) {
+			solAssert(!m_type);
+		}
+	}, m_value);
 }
 
-TypePointer ConstantEvaluator::evaluate(Expression const& _expr)
+std::string const& TypedValue::asString() const
 {
-	_expr.accept(*this);
-	return type(_expr);
+	solAssert(isString());
+	return std::get<std::string>(m_value);
+}
+
+rational const& TypedValue::asRational() const
+{
+	solAssert(isRational());
+	return std::get<rational>(m_value);
+}
+
+Type const& TypedValue::type() const
+{
+	solAssert(m_type);
+	return *m_type;
 }

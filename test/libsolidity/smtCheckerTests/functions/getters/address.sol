@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract C {
 	address public x;
 	address payable public y;
@@ -13,6 +11,10 @@ contract C {
 		assert(y == address(this)); // should fail
 	}
 }
+// ====
+// SMTEngine: all
 // ----
-// Warning 6328: (204-230): CHC: Assertion violation happens here.\nCounterexample:\nx = 0, y = 0\n\n\n\nTransaction trace:\nconstructor()\nState: x = 0, y = 0\nf()
-// Warning 6328: (282-308): CHC: Assertion violation happens here.\nCounterexample:\nx = 0, y = 0\n\n\n\nTransaction trace:\nconstructor()\nState: x = 0, y = 0\nf()
+// Warning 6328: (171-197): CHC: Assertion violation happens here.\nCounterexample:\nx = 0x0, y = 0x0\na = 0x0\nb = 0x0\n\nTransaction trace:\nC.constructor()\nState: x = 0x0, y = 0x0\nC.f()
+// Warning 6328: (249-275): CHC: Assertion violation happens here.\nCounterexample:\nx = 0x0, y = 0x0\na = 0x0\nb = 0x0\n\nTransaction trace:\nC.constructor()\nState: x = 0x0, y = 0x0\nC.f()
+// Info 1391: CHC: 2 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

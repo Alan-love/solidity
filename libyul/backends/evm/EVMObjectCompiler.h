@@ -21,26 +21,30 @@
 
 #pragma once
 
+#include <optional>
+#include <cstdint>
+
 namespace solidity::yul
 {
-struct Object;
+class Object;
 class AbstractAssembly;
-struct EVMDialect;
+class EVMDialect;
 
 class EVMObjectCompiler
 {
 public:
-	static void compile(Object& _object, AbstractAssembly& _assembly, EVMDialect const& _dialect, bool _evm15, bool _optimize);
+	static void compile(
+		Object const& _object,
+		AbstractAssembly& _assembly,
+		bool _optimize,
+		bool _viaSSACFG = false
+	);
 private:
-	EVMObjectCompiler(AbstractAssembly& _assembly, EVMDialect const& _dialect, bool _evm15):
-		m_assembly(_assembly), m_dialect(_dialect), m_evm15(_evm15)
-	{}
+	EVMObjectCompiler(AbstractAssembly& _assembly): m_assembly(_assembly) {}
 
-	void run(Object& _object, bool _optimize);
+	void run(Object const& _object, bool _optimize, bool _viaSSACFG);
 
 	AbstractAssembly& m_assembly;
-	EVMDialect const& m_dialect;
-	bool m_evm15 = false;
 };
 
 }

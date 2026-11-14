@@ -18,32 +18,75 @@
 #
 # (c) 2019 solidity contributors.
 #------------------------------------------------------------------------------
+
+set -e
+
 source scripts/common.sh
-source test/externalTests/common.sh
+source scripts/externalTests/common.sh
 
-verify_input "$1"
-export SOLJSON="$1"
+REPO_ROOT=$(realpath "$(dirname "$0")/../..")
 
-function install_fn { npm install; }
-function compile_fn { npx truffle compile; }
-function test_fn { npm run test; }
+verify_input "$@"
+BINARY_TYPE="$1"
+BINARY_PATH="$(realpath "$2")"
+SELECTED_PRESETS="$3"
+
+function compile_fn { yarn build; }
+function test_fn { yarn test; }
 
 function ens_test
 {
-    export OPTIMIZER_LEVEL=1
-    export CONFIG="truffle-config.js"
+    local repo="https://github.com/ensdomains/ens-contracts.git"
+    local ref="083d29a2c50cd0a8307386abf8fadc217b256256"
+    local config_file="hardhat.config.js"
 
-    truffle_setup "$SOLJSON" https://github.com/solidity-external-tests/ens.git master_070
+    local compile_only_presets=(
+        ir-no-optimize            # FIXME: Tests fail with "Error: cannot estimate gas; transaction may fail or may require manual gas limit"
+        legacy-no-optimize        # Compiles but tests fail to deploy GovernorCompatibilityBravo (code too large).
+    )
+    local settings_presets=(
+        "${compile_only_presets[@]}"
+        ir-optimize-evm-only
+        ir-optimize-evm+yul       # Needs memory-safe inline assembly patch
+        legacy-optimize-evm-only
+        legacy-optimize-evm+yul
+    )
 
-    # Use latest Truffle. Older versions crash on the output from 0.8.0.
-    force_truffle_version ^5.1.55
+    [[ $SELECTED_PRESETS != "" ]] || SELECTED_PRESETS=$(circleci_select_steps_multiarg "${settings_presets[@]}")
+    print_presets_or_exit "$SELECTED_PRESETS"
 
-    # Remove the lock file (if it exists) to prevent it from overriding our changes in package.json
-    rm -f package-lock.json
+    setup_solc "$DIR" "$BINARY_TYPE" "$BINARY_PATH"
+    download_project "$repo" "$ref" "$DIR"
 
-    run_install "$SOLJSON" install_fn
+    neutralize_package_lock
+    neutralize_package_json_hooks
+    force_hardhat_compiler_binary "$config_file" "$BINARY_TYPE" "$BINARY_PATH"
+    force_hardhat_compiler_settings "$config_file" "$(first_word "$SELECTED_PRESETS")"
+    pnpm install
 
-    truffle_run_test "$SOLJSON" compile_fn test_fn
+    replace_version_pragmas
+    remove_experimental_abi_encoder_v2_pragmas
+    neutralize_packaged_contracts
+
+    # In some cases Hardhat does not detect revert reasons properly via IR.
+    # TODO: Remove this when https://github.com/NomicFoundation/hardhat/issues/3365 gets fixed.
+    sed -i "s|it\(('Does not allow wrapping a name you do not own',\)|it.skip\1|g" test/wrapper/NameWrapper.js
+    sed -i "s|it\(('can set fuses and then burn ability to burn fuses',\)|it.skip\1|g" test/wrapper/NameWrapper.js
+    sed -i "s|it\(('can set fuses and burn canSetResolver and canSetTTL',\)|it.skip\1|g" test/wrapper/NameWrapper.js
+    sed -i "s|it\(('Cannot be called if CANNOT_TRANSFER is burned\.',\)|it.skip\1|g" test/wrapper/NameWrapper.js
+    sed -i "s|it\(('Cannot be called if CANNOT_SET_RESOLVER is burned\.\?',\)|it.skip\1|g" test/wrapper/NameWrapper.js
+    sed -i "s|it\(('Cannot be called if CANNOT_SET_TTL is burned\.\?',\)|it.skip\1|g" test/wrapper/NameWrapper.js
+    sed -i "s|it\(('Cannot be called if CREATE_SUBDOMAIN is burned and is a new subdomain',\)|it.skip\1|g" test/wrapper/NameWrapper.js
+    sed -i "s|it\(('Cannot be called if REPLACE_SUBDOMAIN is burned and is an existing subdomain',\)|it.skip\1|g" test/wrapper/NameWrapper.js
+    sed -i "s|it\(('Cannot be called if CANNOT_CREATE_SUBDOMAIN is burned and is a new subdomain',\)|it.skip\1|g" test/wrapper/NameWrapper.js
+    sed -i "s|it\(('Cannot be called if PARENT_CANNOT_CONTROL is burned and is an existing subdomain',\)|it.skip\1|g" test/wrapper/NameWrapper.js
+
+    find . -name "*.sol" -type f -exec sed -i -e 's/^\(\s*\)\(assembly\)/\1\/\/\/ @solidity memory-safe-assembly\n\1\2/' '{}' \;
+
+    for preset in $SELECTED_PRESETS; do
+        hardhat_run_test "$config_file" "$preset" "${compile_only_presets[*]}" compile_fn test_fn
+        store_benchmark_report hardhat ens "$repo" "$preset"
+    done
 }
 
-external_test Ens ens_test
+external_test ENS ens_test

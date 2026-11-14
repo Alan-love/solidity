@@ -27,9 +27,11 @@
 
 #include <libsolutil/CommonData.h>
 
-using namespace std;
 using namespace solidity;
 using namespace solidity::yul;
+
+FunctionHoister::FunctionHoister() = default;
+FunctionHoister::~FunctionHoister() = default;
 
 void FunctionHoister::operator()(Block& _block)
 {
@@ -38,10 +40,10 @@ void FunctionHoister::operator()(Block& _block)
 	for (auto&& statement: _block.statements)
 	{
 		std::visit(*this, statement);
-		if (holds_alternative<FunctionDefinition>(statement))
+		if (std::holds_alternative<FunctionDefinition>(statement))
 		{
 			m_functions.emplace_back(std::move(statement));
-			statement = Block{_block.location, {}};
+			statement = Block{_block.debugData, {}};
 		}
 	}
 	removeEmptyBlocks(_block);

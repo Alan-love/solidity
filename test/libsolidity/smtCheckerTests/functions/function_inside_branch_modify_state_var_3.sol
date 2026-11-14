@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract C
 {
 	uint x;
@@ -23,6 +21,10 @@ contract C
 	}
 
 }
+// ====
+// SMTEngine: all
 // ----
-// Warning 6328: (209-223): CHC: Assertion violation happens here.\nCounterexample:\nx = 1\nb = true\n\n\nTransaction trace:\nconstructor()\nState: x = 0\ng(true)
-// Warning 6328: (321-335): CHC: Assertion violation happens here.\nCounterexample:\nx = 1\nb = false\n\n\nTransaction trace:\nconstructor()\nState: x = 0\nh(false)
+// Warning 6328: (176-190): CHC: Assertion violation happens here.\nCounterexample:\nx = 1\nb = true\n\nTransaction trace:\nC.constructor()\nState: x = 0\nC.g(true)\n    C.f() -- internal call
+// Warning 6328: (288-302): CHC: Assertion violation happens here.\nCounterexample:\nx = 1\nb = false\n\nTransaction trace:\nC.constructor()\nState: x = 0\nC.h(false)\n    C.f() -- internal call
+// Info 1391: CHC: 1 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

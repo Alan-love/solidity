@@ -22,31 +22,34 @@
 
 #include <libyul/optimiser/ExpressionSplitter.h>
 
-#include <libyul/optimiser/ASTWalker.h>
 #include <libyul/optimiser/OptimiserStep.h>
-#include <libyul/optimiser/TypeInfo.h>
 
 #include <libyul/AST.h>
 #include <libyul/Dialect.h>
+#include <libyul/Utilities.h>
 
 #include <libsolutil/CommonData.h>
-#include <libsolutil/Visitor.h>
 
-using namespace std;
 using namespace solidity;
 using namespace solidity::yul;
 using namespace solidity::util;
 using namespace solidity::langutil;
 
+ExpressionSplitter::ExpressionSplitter(Dialect const& _dialect, NameDispenser& _nameDispenser):
+	m_dialect(_dialect),
+	m_nameDispenser(_nameDispenser)
+{}
+
+ExpressionSplitter::~ExpressionSplitter() = default;
+
 void ExpressionSplitter::run(OptimiserStepContext& _context, Block& _ast)
 {
-	TypeInfo typeInfo(_context.dialect, _ast);
-	ExpressionSplitter{_context.dialect, _context.dispenser, typeInfo}(_ast);
+	ExpressionSplitter{_context.dialect, _context.dispenser}(_ast);
 }
 
 void ExpressionSplitter::operator()(FunctionCall& _funCall)
 {
-	BuiltinFunction const* builtin = m_dialect.builtin(_funCall.functionName.name);
+	BuiltinFunction const* builtin = resolveBuiltinFunction(_funCall.functionName, m_dialect);
 
 	for (size_t i = _funCall.arguments.size(); i > 0; i--)
 		if (!builtin || !builtin->literalArgument(i - 1))
@@ -77,11 +80,11 @@ void ExpressionSplitter::operator()(ForLoop& _loop)
 
 void ExpressionSplitter::operator()(Block& _block)
 {
-	vector<Statement> saved;
+	std::vector<Statement> saved;
 	swap(saved, m_statementsToPrefix);
 
-	function<std::optional<vector<Statement>>(Statement&)> f =
-			[&](Statement& _statement) -> std::optional<vector<Statement>> {
+	std::function<std::optional<std::vector<Statement>>(Statement&)> f =
+			[&](Statement& _statement) -> std::optional<std::vector<Statement>> {
 		m_statementsToPrefix.clear();
 		visit(_statement);
 		if (m_statementsToPrefix.empty())
@@ -96,20 +99,18 @@ void ExpressionSplitter::operator()(Block& _block)
 
 void ExpressionSplitter::outlineExpression(Expression& _expr)
 {
-	if (holds_alternative<Identifier>(_expr))
+	if (std::holds_alternative<Identifier>(_expr))
 		return;
 
 	visit(_expr);
 
-	SourceLocation location = locationOf(_expr);
-	YulString var = m_nameDispenser.newName({});
-	YulString type = m_typeInfo.typeOf(_expr);
+	langutil::DebugData::ConstPtr debugData = debugDataOf(_expr);
+	YulName var = m_nameDispenser.newName({});
 	m_statementsToPrefix.emplace_back(VariableDeclaration{
-		location,
-		{{TypedName{location, var, type}}},
-		make_unique<Expression>(std::move(_expr))
+		debugData,
+		{{NameWithDebugData{debugData, var}}},
+		std::make_unique<Expression>(std::move(_expr))
 	});
-	_expr = Identifier{location, var};
-	m_typeInfo.setVariableType(var, type);
+	_expr = Identifier{debugData, var};
 }
 

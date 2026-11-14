@@ -1,4 +1,3 @@
-pragma experimental SMTChecker;
 // Check that variables are cleared
 contract C {
     function f(uint x) public pure {
@@ -10,6 +9,9 @@ contract C {
     }
 }
 // ====
+// SMTEngine: all
+// SMTIgnoreCex: no
 // SMTSolvers: z3
 // ----
-// Warning 6328: (194-208): CHC: Assertion violation happens here.\nCounterexample:\n\nx = 1\n\n\nTransaction trace:\nconstructor()\nf(0)
+// Warning 6328: (162-176): CHC: Assertion violation happens here.\nCounterexample:\n\nx = 1\n\nTransaction trace:\nC.constructor()\nC.f(0)
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

@@ -38,38 +38,73 @@ namespace solidity::frontend
 class TypeChecker;
 
 /**
- * Small drop-in replacement for TypeChecker to evaluate simple expressions of integer constants.
+ * Small drop-in replacement for TypeChecker to evaluate simple expressions of integer and string constants.
+ *
+ * Note: This always use "checked arithmetic" in the sense that any over- or underflow
+ * results in "unknown" value.
  */
 class ConstantEvaluator: private ASTConstVisitor
 {
 public:
-	ConstantEvaluator(
-		langutil::ErrorReporter& _errorReporter,
-		size_t _newDepth = 0,
-		std::shared_ptr<std::map<ASTNode const*, TypePointer>> _types = std::make_shared<std::map<ASTNode const*, TypePointer>>()
-	):
-		m_errorReporter(_errorReporter),
-		m_depth(_newDepth),
-		m_types(std::move(_types))
+	class TypedValue
 	{
-	}
+	public:
+		using Value = std::variant<std::monostate, rational, std::string>;
 
-	TypePointer evaluate(Expression const& _expr);
+		TypedValue() = default;
+		TypedValue(Type const* _type, Value _value);
+
+		bool isEmpty() const { return std::holds_alternative<std::monostate>(m_value); }
+		bool isString() const { return std::holds_alternative<std::string>(m_value); }
+		bool isRational() const { return std::holds_alternative<rational>(m_value); }
+
+		Type const& type() const;
+		Value const& value() const { return m_value; }
+
+		std::string const& asString() const;
+		rational const& asRational() const;
+
+	private:
+		// RationalType or IntegerType if value is rational
+		// StringLiteralType or ArrayType if value is string
+		Type const* m_type = nullptr;
+		Value m_value;
+	};
+
+	static TypedValue evaluate(
+		langutil::ErrorReporter& _errorReporter,
+		Expression const& _expr
+	);
+
+	/// Works the same as `evaluate` but swallows any errors that might occur in the evaluation and simply returns
+	/// `TypedValue` containing `std::monostate` instead.
+	static TypedValue tryEvaluate(Expression const& _expr);
+
+	/// Performs arbitrary-precision evaluation of a binary operator. Returns nullopt on cases like
+	/// division by zero or e.g. bit operators applied to fractional values.
+	static std::optional<rational> evaluateBinaryOperator(Token _operator, rational const& _left, rational const&  _right);
+
+	/// Performs arbitrary-precision evaluation of a unary operator. Returns nullopt on cases like
+	/// bit operators applied to fractional values.
+	static std::optional<rational> evaluateUnaryOperator(Token _operator, rational const& _input);
 
 private:
+	explicit ConstantEvaluator(langutil::ErrorReporter& _errorReporter): m_errorReporter(_errorReporter) {}
+
+	TypedValue evaluate(ASTNode const& _node);
+
 	void endVisit(BinaryOperation const& _operation) override;
 	void endVisit(UnaryOperation const& _operation) override;
 	void endVisit(Literal const& _literal) override;
 	void endVisit(Identifier const& _identifier) override;
 	void endVisit(TupleExpression const& _tuple) override;
-
-	void setType(ASTNode const& _node, TypePointer const& _type);
-	TypePointer type(ASTNode const& _node);
+	void endVisit(FunctionCall const& _functionCall) override;
 
 	langutil::ErrorReporter& m_errorReporter;
 	/// Current recursion depth.
 	size_t m_depth = 0;
-	std::shared_ptr<std::map<ASTNode const*, TypePointer>> m_types;
+	/// Values of sub-expressions and variable declarations.
+	std::map<ASTNode const*, TypedValue> m_values;
 };
 
 }

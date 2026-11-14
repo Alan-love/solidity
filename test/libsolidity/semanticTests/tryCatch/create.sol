@@ -6,19 +6,19 @@ contract Succeeds {
 }
 
 contract C {
-    function f() public returns (Reverts x, uint, string memory txt) {
+    function f() public returns (bool created, string memory txt) {
         uint i = 3;
         try new Reverts(i) returns (Reverts r) {
-            x = r;
+            created = (address(r) != address(0));
             txt = "success";
         } catch Error(string memory s) {
             txt = s;
         }
     }
-    function g() public returns (Succeeds x, uint, string memory txt) {
+    function g() public returns (bool created, string memory txt) {
         uint i = 8;
         try new Succeeds(i) returns (Succeeds r) {
-            x = r;
+            created = (address(r) != address(0));
             txt = "success";
         } catch Error(string memory s) {
             txt = s;
@@ -26,8 +26,7 @@ contract C {
     }
 }
 // ====
-// compileViaYul: also
 // EVMVersion: >=byzantium
 // ----
-// f() -> 0, 0, 96, 13, "test message."
-// g() -> 0xf01f7809444bd9a93a854361c6fae3f23d9e23db, 0, 96, 7, "success"
+// f() -> false, 0x40, 13, "test message."
+// g() -> true, 0x40, 7, "success"

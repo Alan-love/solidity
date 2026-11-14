@@ -1,7 +1,7 @@
 contract C {
     function g() public returns (uint a, function() external h, uint b) {
         a = 1;
-        h = this.fun;
+        h = C(address(0x1234)).fun;
         b = 9;
     }
     function f() public returns (uint, function() external, uint) {
@@ -13,7 +13,5 @@ contract C {
     }
     function fun() public pure {}
 }
-// ====
-// compileViaYul: also
 // ----
-// f() -> 0x1, 0xfdd67305928fcac8d213d1e47bfa6165cd0b87b946644cd0000000000000000, 9
+// f() -> 0x1, 0x1234946644cd0000000000000000, 9

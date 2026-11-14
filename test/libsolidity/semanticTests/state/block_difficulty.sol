@@ -4,7 +4,7 @@ contract C {
     }
 }
 // ====
-// compileViaYul: also
+// EVMVersion: <paris
 // ----
 // f() -> 200000000
 // f() -> 200000000

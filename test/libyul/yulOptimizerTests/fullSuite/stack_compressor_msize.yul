@@ -22,7 +22,7 @@
 
 	function foo_singlereturn_1(in_1, in_2) -> out
 	{
-		extcodecopy(1,msize(),1,1)
+		mstore8(msize(), 42)
 	}
 
 	a := foo_singlereturn_0()
@@ -33,6 +33,8 @@
 	sstore(0,0)
 	sstore(3,1)
 }
+// ====
+// EVMVersion: >homestead
 // ----
 // step: fullSuite
 //
@@ -40,16 +42,14 @@
 //     {
 //         let _1 := gt(not(gcd(10, 15)), 1)
 //         let _2 := gcd(10, 15)
-//         let _3 := not(0)
-//         let _4 := lt(or(1, add(gcd(10, 15), _3)), 1)
+//         let _3 := lt(or(1, add(gcd(10, 15), not(0))), 1)
+//         let _4 := gcd(10, 15)
 //         let _5 := gcd(10, 15)
-//         let _6 := gcd(10, 15)
 //         pop(keccak256(gcd(10, 15), or(gt(not(gcd(10, 15)), 1), 1)))
-//         mstore(lt(or(gt(1, or(or(gt(or(or(or(gt(or(gt(_3, _6), 1), _5), _4), _2), 1), 1), _1), 1)), 1), 1), 1)
+//         mstore(lt(or(gt(1, or(or(gt(or(or(or(gt(or(gt(not(0), _5), 1), _4), _3), _2), 1), 1), _1), 1)), 1), 1), 1)
 //         sstore(not(gcd(10, 15)), 1)
-//         sstore(0, 0)
 //         sstore(2, 1)
-//         extcodecopy(1, msize(), 1, 1)
+//         foo_singlereturn()
 //         sstore(0, 0)
 //         sstore(3, 1)
 //     }
@@ -59,4 +59,6 @@
 //         case 0 { out := _a }
 //         default { out := gcd(_b, mod(_a, _b)) }
 //     }
+//     function foo_singlereturn()
+//     { mstore8(msize(), 42) }
 // }

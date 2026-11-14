@@ -26,42 +26,68 @@
 # contains a Makefile in the docker/ subdirectory that can be used to create the
 # required base image using:
 #
-#   make version=1.39.15 build
+#   make version=2.0.33 build
 #
-FROM emscripten/emsdk:1.39.15 AS base
-LABEL version="2"
+# Note that emscripten is supposed to automatically install to $(em-config CACHE)/sysroot, but
+# apparently this currently breaks due to conflicting compatibility headers.
+# Using $(em-config CACHE)/sysroot/usr seems to work, though, and still has cmake find the
+# dependencies automatically.
+FROM emscripten/emsdk:3.1.54 AS base
+LABEL version="28"
 
 ADD emscripten.jam /usr/src
-RUN set -ex; \
-	cd /usr/src; \
-	git clone https://github.com/Z3Prover/z3.git -b z3-4.8.9 --depth 1 ; \
-	cd z3; \
-	mkdir build; \
-	cd build; \
+RUN <<-EOF
+    set -ex
+	apt-get update
+	apt-get install -qqy --no-install-recommends \
+		lsof \
+		ccache \
+		lz4 \
+		python3 \
+		python3-pip \
+		sudo && \
+	pip3 install requests
+EOF
+
+# Install Z3
+RUN <<-EOF
+    set -ex
+	cd /usr/src
+	git clone https://github.com/Z3Prover/z3.git -b z3-4.13.3 --depth 1
+	cd z3
+	mkdir build
+	cd build
 	emcmake cmake \
+		-DCMAKE_INSTALL_PREFIX=$(em-config CACHE)/sysroot/usr \
 		-DCMAKE_BUILD_TYPE=MinSizeRel \
-		-DCMAKE_INSTALL_PREFIX=/emsdk/emscripten/sdk/system/ \
 		-DZ3_BUILD_LIBZ3_SHARED=OFF \
 		-DZ3_ENABLE_EXAMPLE_TARGETS=OFF \
 		-DZ3_BUILD_TEST_EXECUTABLES=OFF \
 		-DZ3_BUILD_EXECUTABLE=OFF \
 		-DZ3_SINGLE_THREADED=ON \
 		-DCMAKE_CXX_FLAGS="-s DISABLE_EXCEPTION_CATCHING=0" \
-		..; \
-	make; make install; \
-	rm -r /usr/src/z3; \
-	cd /usr/src; \
-	wget -q 'https://dl.bintray.com/boostorg/release/1.73.0/source/boost_1_73_0.tar.bz2' -O boost.tar.bz2; \
-	test "$(sha256sum boost.tar.bz2)" = "4eb3b8d442b426dc35346235c8733b5ae35ba431690e38c6a8263dce9fcbb402  boost.tar.bz2"; \
-	tar -xf boost.tar.bz2; \
-	rm boost.tar.bz2; \
-	cd boost_1_73_0; \
-	mv ../emscripten.jam .; \
-	./bootstrap.sh; \
-	echo "using emscripten : : em++ ;" >> project-config.jam ; \
+		..
+	cmake --build . --parallel "$(nproc)"
+	cmake --install .
+	rm -r /usr/src/z3
+EOF
+
+# Install Boost
+RUN <<-EOF
+    set -ex
+	cd /usr/src
+	wget -q 'https://archives.boost.io/release/1.83.0/source/boost_1_83_0.tar.bz2' -O boost.tar.bz2
+	test "$(sha256sum boost.tar.bz2)" = "6478edfe2f3305127cffe8caf73ea0176c53769f4bf1585be237eb30798c3b8e  boost.tar.bz2"
+	tar -xf boost.tar.bz2
+	rm boost.tar.bz2
+	cd boost_1_83_0
+	mv ../emscripten.jam .
+	./bootstrap.sh
+	echo "using emscripten : : em++ ;" >> project-config.jam
 	./b2 toolset=emscripten link=static variant=release threading=single runtime-link=static \
 		--with-system --with-filesystem --with-test --with-program_options \
 		cxxflags="-s DISABLE_EXCEPTION_CATCHING=0 -Wno-unused-local-typedef -Wno-variadic-macros -Wno-c99-extensions -Wno-all" \
-	       --prefix=/emsdk/emscripten/sdk/system install; \
-	rm -r /usr/src/boost_1_73_0
+	       --prefix=$(em-config CACHE)/sysroot/usr install
+	rm -r /usr/src/boost_1_83_0
+EOF
 

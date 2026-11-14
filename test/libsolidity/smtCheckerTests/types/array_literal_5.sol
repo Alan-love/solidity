@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract C
 {
 	uint[] s;
@@ -12,5 +10,10 @@ contract C
 		assert(s[2] != a[2]); // fails
 	}
 }
+// ====
+// SMTEngine: all
+// SMTIgnoreCex: no
 // ----
-// Warning 6328: (209-229): CHC: Assertion violation happens here.\nCounterexample:\ns = [1, 2, 3]\n\n\n\nTransaction trace:\nconstructor()\nState: s = []\nf()
+// Warning 6328: (176-196): CHC: Assertion violation happens here.\nCounterexample:\ns = [1, 2, 3]\na = [1, 2, 3]\n\nTransaction trace:\nC.constructor()\nState: s = []\nC.f()
+// Info 1391: CHC: 9 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

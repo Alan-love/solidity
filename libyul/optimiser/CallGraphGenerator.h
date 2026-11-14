@@ -17,29 +17,54 @@
 // SPDX-License-Identifier: GPL-3.0
 /**
  * Specific AST walker that generates the call graph.
+ *
+ * Prerequisites: Disambiguator
  */
 
 #pragma once
 
 #include <libyul/optimiser/ASTWalker.h>
 
-#include <libsolutil/InvertibleMap.h>
+#include <libyul/Builtins.h>
 
+#include <cstddef>
 #include <map>
-#include <optional>
 #include <set>
+#include <vector>
 
 namespace solidity::yul
 {
 
+/**
+ * Cycle structure of a call graph, derived from it by CallGraph::analyzeCallCycles
+ */
+struct CallGraphCycles
+{
+	/// @returns true if @a _function is part of a (mutual) recursion. Always false for builtins.
+	bool isRecursive(FunctionHandle const& _function) const { return recursiveFunctions.contains(_function); }
+	/// @returns the index of the strongly-connected component that contains @a _function.
+	std::size_t componentIndexOf(FunctionHandle const& _function) const { return componentOfFunction.at(_function); }
+	/// @returns the members of the strongly-connected component with index @a _component.
+	std::vector<FunctionHandle> const& component(std::size_t const _component) const { return stronglyConnectedComponents.at(_component); }
+
+	/// The strongly-connected components of the call graph.
+	std::vector<std::vector<FunctionHandle>> stronglyConnectedComponents;
+	/// Maps each function to the index of the component in @a stronglyConnectedComponents containing it.
+	std::map<FunctionHandle, std::size_t> componentOfFunction;
+	/// The set of functions contained in cycles in the call graph, i.e., functions that are part of a
+	/// (mutual) recursion. This does not include functions that merely call recursive functions.
+	/// Never contains a builtin: at Yul level builtins cannot call other functions, so they have no
+	/// outgoing call-graph edges and can be neither mutually nor directly recursive.
+	std::set<FunctionHandle> recursiveFunctions;
+};
+
 struct CallGraph
 {
-	std::map<YulString, std::set<YulString>> functionCalls;
-	std::set<YulString> functionsWithLoops;
-	/// @returns the set of functions contained in cycles in the call graph, i.e.
-	/// functions that are part of a (mutual) recursion.
-	/// Note that this does not include functions that merely call recursive functions.
-	std::set<YulString> recursiveFunctions() const;
+	CallGraphCycles analyzeCallCycles() const;
+
+	/// Map function definition name -> function name
+	std::map<FunctionHandle, std::vector<FunctionHandle>> functionCalls;
+	std::set<YulName> functionsWithLoops;
 };
 
 /**
@@ -48,10 +73,14 @@ struct CallGraph
  * It also generates information about which functions contain for loops.
  *
  * The outermost (non-function) context is denoted by the empty string.
+ *
+ * @throws InputNotDisambiguatedException if input is not disambiguated
  */
 class CallGraphGenerator: public ASTWalker
 {
 public:
+	struct InputNotDisambiguatedException: virtual YulException {};
+
 	static CallGraph callGraph(Block const& _ast);
 
 	using ASTWalker::operator();
@@ -64,7 +93,7 @@ private:
 
 	CallGraph m_callGraph;
 	/// The name of the function we are currently visiting during traversal.
-	YulString m_currentFunction;
+	YulName m_currentFunction;
 };
 
 }

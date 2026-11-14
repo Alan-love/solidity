@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract C {
 	uint[][] a;
 	function f(uint[] memory x, uint y) public {
@@ -10,7 +8,10 @@ contract C {
 	}
 }
 // ====
+// SMTEngine: all
 // SMTIgnoreCex: yes
 // ----
-// Warning 3944: (162-177): CHC: Underflow (resulting value less than 0) happens here.
-// Warning 6328: (150-184): CHC: Assertion violation happens here.
+// Warning 3944: (129-144): CHC: Underflow (resulting value less than 0) happens here.\nCounterexample:\na = [[]]\nx = []\ny = 0\n\nTransaction trace:\nC.constructor()\nState: a = []\nC.f([], 0)
+// Warning 6328: (117-151): CHC: Assertion violation happens here.\nCounterexample:\n\ny = 0\n\nTransaction trace:\nC.constructor()\nState: a = []\nC.f(x, 0) -- counterexample incomplete; parameter name used instead of value
+// Info 1391: CHC: 6 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

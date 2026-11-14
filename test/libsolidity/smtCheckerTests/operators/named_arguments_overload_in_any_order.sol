@@ -1,4 +1,3 @@
-pragma experimental SMTChecker;
 contract C {
 	function f(uint u, string memory s, bool b) internal {}
 	function f(uint u, uint s, uint b) internal {}
@@ -12,4 +11,7 @@ contract C {
 		f({b: true,  u: 1,     s: "abc"});
 	}
 }
+// ====
+// SMTEngine: all
 // ----
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

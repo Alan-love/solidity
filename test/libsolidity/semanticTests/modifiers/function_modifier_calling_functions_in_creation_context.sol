@@ -44,6 +44,5 @@ contract C is A {
         data |= 0x4000;
     }
 }
-
 // ----
 // getData() -> 0x4300

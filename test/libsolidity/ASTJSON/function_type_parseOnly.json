@@ -2,8 +2,7 @@
   "absolutePath": "a",
   "id": 18,
   "nodeType": "SourceUnit",
-  "nodes":
-  [
+  "nodes": [
     {
       "abstract": false,
       "baseContracts": [],
@@ -11,15 +10,14 @@
       "contractKind": "contract",
       "id": 17,
       "name": "C",
+      "nameLocation": "9:1:1",
       "nodeType": "ContractDefinition",
-      "nodes":
-      [
+      "nodes": [
         {
-          "body":
-          {
+          "body": {
             "id": 15,
             "nodeType": "Block",
-            "src": "120:2:1",
+            "src": "127:2:1",
             "statements": []
           },
           "id": 16,
@@ -27,52 +25,48 @@
           "kind": "function",
           "modifiers": [],
           "name": "f",
+          "nameLocation": "22:1:1",
           "nodeType": "FunctionDefinition",
-          "parameters":
-          {
+          "parameters": {
             "id": 7,
             "nodeType": "ParameterList",
-            "parameters":
-            [
+            "parameters": [
               {
                 "constant": false,
                 "id": 6,
                 "mutability": "mutable",
                 "name": "x",
+                "nameLocation": "67:1:1",
                 "nodeType": "VariableDeclaration",
                 "src": "24:44:1",
                 "stateVariable": false,
                 "storageLocation": "default",
                 "typeDescriptions": {},
-                "typeName":
-                {
+                "typeName": {
                   "id": 5,
                   "nodeType": "FunctionTypeName",
-                  "parameterTypes":
-                  {
+                  "parameterTypes": {
                     "id": 1,
                     "nodeType": "ParameterList",
                     "parameters": [],
                     "src": "32:2:1"
                   },
-                  "returnParameterTypes":
-                  {
+                  "returnParameterTypes": {
                     "id": 4,
                     "nodeType": "ParameterList",
-                    "parameters":
-                    [
+                    "parameters": [
                       {
                         "constant": false,
                         "id": 3,
                         "mutability": "mutable",
                         "name": "",
+                        "nameLocation": "-1:-1:-1",
                         "nodeType": "VariableDeclaration",
                         "src": "61:4:1",
                         "stateVariable": false,
                         "storageLocation": "default",
                         "typeDescriptions": {},
-                        "typeName":
-                        {
+                        "typeName": {
                           "id": 2,
                           "name": "uint",
                           "nodeType": "ElementaryTypeName",
@@ -94,63 +88,58 @@
             ],
             "src": "23:46:1"
           },
-          "returnParameters":
-          {
+          "returnParameters": {
             "id": 14,
             "nodeType": "ParameterList",
-            "parameters":
-            [
+            "parameters": [
               {
                 "constant": false,
                 "id": 13,
                 "mutability": "mutable",
                 "name": "",
+                "nameLocation": "-1:-1:-1",
                 "nodeType": "VariableDeclaration",
-                "src": "79:40:1",
+                "src": "86:40:1",
                 "stateVariable": false,
                 "storageLocation": "default",
                 "typeDescriptions": {},
-                "typeName":
-                {
+                "typeName": {
                   "id": 12,
                   "nodeType": "FunctionTypeName",
-                  "parameterTypes":
-                  {
+                  "parameterTypes": {
                     "id": 8,
                     "nodeType": "ParameterList",
                     "parameters": [],
-                    "src": "87:2:1"
+                    "src": "94:2:1"
                   },
-                  "returnParameterTypes":
-                  {
+                  "returnParameterTypes": {
                     "id": 11,
                     "nodeType": "ParameterList",
-                    "parameters":
-                    [
+                    "parameters": [
                       {
                         "constant": false,
                         "id": 10,
                         "mutability": "mutable",
                         "name": "",
+                        "nameLocation": "-1:-1:-1",
                         "nodeType": "VariableDeclaration",
-                        "src": "113:4:1",
+                        "src": "120:4:1",
                         "stateVariable": false,
                         "storageLocation": "default",
                         "typeDescriptions": {},
-                        "typeName":
-                        {
+                        "typeName": {
                           "id": 9,
                           "name": "uint",
                           "nodeType": "ElementaryTypeName",
-                          "src": "113:4:1",
+                          "src": "120:4:1",
                           "typeDescriptions": {}
                         },
                         "visibility": "internal"
                       }
                     ],
-                    "src": "112:6:1"
+                    "src": "119:6:1"
                   },
-                  "src": "79:40:1",
+                  "src": "86:40:1",
                   "stateMutability": "view",
                   "typeDescriptions": {},
                   "visibility": "external"
@@ -158,16 +147,18 @@
                 "visibility": "internal"
               }
             ],
-            "src": "78:41:1"
+            "src": "85:41:1"
           },
-          "src": "13:109:1",
+          "src": "13:116:1",
           "stateMutability": "nonpayable",
           "virtual": false,
           "visibility": "public"
         }
       ],
-      "src": "0:124:1"
+      "src": "0:131:1",
+      "usedErrors": [],
+      "usedEvents": []
     }
   ],
-  "src": "0:125:1"
+  "src": "0:132:1"
 }

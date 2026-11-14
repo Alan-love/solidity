@@ -1,0 +1,75 @@
+{
+    function f(a, b) -> r {
+        let x := add(a,b)
+        r := sub(x,a)
+    }
+    function g() {
+        sstore(0x01, 0x0101)
+    }
+    function h(x) {
+        h(f(x, 0))
+        g()
+    }
+    function i() -> v, w {
+        v := 0x0202
+        w := 0x0303
+    }
+    let x, y := i()
+    h(x)
+    h(y)
+}
+// ----
+// digraph SSACFG {
+// nodesep=0.7;
+// graph[fontname="DejaVu Sans"]
+// node[shape=box,fontname="DejaVu Sans"];
+//
+// Entry [label="Entry"];
+// Entry -> Block0_0;
+// Block0_0 [fillcolor="#FF746C", style=filled, label="\
+// Block 0; (0, max 0)\nLiveIn: \l\
+// LiveOut: \l\nUsed: \l\nv0 := i()\l\
+// v1 := v0.proj(0)\l\
+// v2 := v0.proj(1)\l\
+// h(v1)\l\
+// "];
+// Block0_0Exit [label="Terminated"];
+// Block0_0 -> Block0_0Exit;
+// FunctionEntry_f_0 [label="function f:
+//  [1 returns] := f(v0, v1)"];
+// FunctionEntry_f_0 -> Block1_0;
+// Block1_0 [label="\
+// Block 0; (0, max 0)\nLiveIn: v0[2], v1[1]\l\
+// LiveOut: v4[1]\l\nUsed: v0[2], v1[1]\l\nv3 := add(v0, v1)\l\
+// v4 := sub(v3, v0)\l\
+// "];
+// Block1_0Exit [label="FunctionReturn[v4]"];
+// Block1_0 -> Block1_0Exit;
+// FunctionEntry_g_0 [label="function g:
+//  g()"];
+// FunctionEntry_g_0 -> Block2_0;
+// Block2_0 [label="\
+// Block 0; (0, max 0)\nLiveIn: \l\
+// LiveOut: \l\nUsed: \l\nsstore(0x01, 0x0101)\l\
+// "];
+// Block2_0Exit [label="FunctionReturn[]"];
+// Block2_0 -> Block2_0Exit;
+// FunctionEntry_h_0 [label="function h:
+//  h(v0)"];
+// FunctionEntry_h_0 -> Block3_0;
+// Block3_0 [fillcolor="#FF746C", style=filled, label="\
+// Block 0; (0, max 0)\nLiveIn: v0[1]\l\
+// LiveOut: \l\nUsed: v0[1]\l\nv2 := f(v0, 0x00)\l\
+// h(v2)\l\
+// "];
+// Block3_0Exit [label="Terminated"];
+// Block3_0 -> Block3_0Exit;
+// FunctionEntry_i_0 [label="function i:
+//  [2 returns] := i()"];
+// FunctionEntry_i_0 -> Block4_0;
+// Block4_0 [label="\
+// Block 0; (0, max 0)\nLiveIn: \l\
+// LiveOut: \l\nUsed: \l\n"];
+// Block4_0Exit [label="FunctionReturn[0x0202, 0x0303]"];
+// Block4_0 -> Block4_0Exit;
+// }

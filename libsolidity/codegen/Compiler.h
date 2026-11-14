@@ -31,12 +31,17 @@
 #include <functional>
 #include <ostream>
 
-namespace solidity::frontend {
+namespace solidity::frontend
+{
 
 class Compiler
 {
 public:
-	Compiler(langutil::EVMVersion _evmVersion, RevertStrings _revertStrings, OptimiserSettings _optimiserSettings):
+	Compiler(
+		langutil::EVMVersion _evmVersion,
+		RevertStrings _revertStrings,
+		OptimiserSettings _optimiserSettings
+	):
 		m_optimiserSettings(std::move(_optimiserSettings)),
 		m_runtimeContext(_evmVersion, _revertStrings),
 		m_context(_evmVersion, _revertStrings, &m_runtimeContext)
@@ -61,14 +66,10 @@ public:
 	std::string generatedYulUtilityCode() const { return m_context.generatedYulUtilityCode(); }
 	std::string runtimeGeneratedYulUtilityCode() const { return m_runtimeContext.generatedYulUtilityCode(); }
 
-	/// @returns the entry label of the given function. Might return an AssemblyItem of type
-	/// UndefinedItem if it does not exist yet.
-	evmasm::AssemblyItem functionEntryLabel(FunctionDefinition const& _function) const;
-
 private:
 	OptimiserSettings const m_optimiserSettings;
 	CompilerContext m_runtimeContext;
-	size_t m_runtimeSub = size_t(-1); ///< Identifier of the runtime sub-assembly, if present.
+	evmasm::SubAssemblyID m_runtimeSub{}; ///< Identifier of the runtime sub-assembly, if present.
 	CompilerContext m_context;
 };
 

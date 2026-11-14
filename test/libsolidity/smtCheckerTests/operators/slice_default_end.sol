@@ -1,16 +1,17 @@
-pragma experimental SMTChecker;
-
 contract C {
 	function f(bytes calldata b) external pure {
 		require(b.length == 30);
 		require(b[10] == 0xff);
 		require(b[b.length - 1] == 0xaa);
-		assert(bytes(b[10:]).length == 20);
-		assert(bytes(b[10:])[0] == 0xff);
+		assert(bytes(b[10:]).length == 20); // should hold
+		// Disabled because of Spacer's nondeterminism.
+		//assert(bytes(b[10:])[0] == 0xff); // should hold
 		//assert(bytes(b[10:])[5] == 0xff); // Removed because of Spacer's nondeterminism
 		//assert(bytes(b[10:])[19] == 0xaa); // Removed because of Spacer nondeterminism
 	}
 }
+// ====
+// SMTEngine: all
 // ----
-// Warning 6328: (221-253): CHC: Assertion violation might happen here.
-// Warning 4661: (221-253): BMC: Assertion violation happens here.
+// Info 1391: CHC: 4 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

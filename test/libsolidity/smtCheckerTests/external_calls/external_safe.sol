@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 abstract contract D {
 	function d() external virtual;
 }
@@ -8,14 +6,17 @@ contract C {
 	uint x;
 	D d;
 	function f() public {
-		if (x < 10)
+		if (x < 4)
 			++x;
 	}
 	function g() public {
 		d.d();
-		assert(x < 11);
+		assert(x < 5);
 	}
 }
+// ====
+// SMTEngine: chc
+// SMTSolvers: eld
+// SMTTargets: assert
 // ----
-// Warning 6328: (200-214): CHC: Assertion violation might happen here.
-// Warning 4661: (200-214): BMC: Assertion violation happens here.
+// Info 1391: CHC: 1 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.

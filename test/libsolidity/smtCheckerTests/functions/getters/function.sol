@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract C {
 	function () external returns (uint) public g;
 
@@ -14,6 +12,10 @@ contract C {
 		return 42;
 	}
 }
+// ====
+// SMTEngine: all
 // ----
-// Warning 6328: (185-203): CHC: Assertion violation happens here.\nCounterexample:\ng = 0\n\n\n\nTransaction trace:\nconstructor()\nState: g = 0\nf()
-// Warning 6328: (295-311): CHC: Assertion violation happens here.\nCounterexample:\ng = 0\n\n\n\nTransaction trace:\nconstructor()\nState: g = 0\nf()
+// Warning 8364: (140-146): Assertion checker does not yet implement type function () view external returns (function () external returns (uint256))
+// Warning 6328: (152-170): CHC: Assertion violation happens here.\nCounterexample:\ng = 0\ne = 0\n\nTransaction trace:\nC.constructor()\nState: g = 0\nC.f()\n    e() -- untrusted external call\n    g() -- untrusted external call
+// Warning 6328: (262-278): CHC: Assertion violation happens here.\nCounterexample:\ng = 0\ne = 0\n\nTransaction trace:\nC.constructor()\nState: g = 0\nC.f()\n    e() -- untrusted external call\n    g() -- untrusted external call\n    e() -- untrusted external call
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

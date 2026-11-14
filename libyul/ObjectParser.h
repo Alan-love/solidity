@@ -21,7 +21,6 @@
 
 #pragma once
 
-#include <libyul/YulString.h>
 #include <libyul/Object.h>
 #include <libyul/Dialect.h>
 
@@ -56,14 +55,15 @@ public:
 	std::shared_ptr<Object> parse(std::shared_ptr<langutil::Scanner> const& _scanner, bool _reuseScanner);
 
 private:
+	std::optional<SourceNameMap> tryParseSourceNameMapping() const;
 	std::shared_ptr<Object> parseObject(Object* _containingObject = nullptr);
-	std::shared_ptr<Block> parseCode();
-	std::shared_ptr<Block> parseBlock();
+	std::shared_ptr<AST> parseCode(std::optional<SourceNameMap> _sourceNames);
+	std::shared_ptr<AST> parseBlock(std::optional<SourceNameMap> _sourceNames);
 	void parseData(Object& _containingObject);
 
 	/// Tries to parse a name that is non-empty and unique inside the containing object.
-	YulString parseUniqueName(Object const* _containingObject);
-	void addNamedSubObject(Object& _container, YulString _name, std::shared_ptr<ObjectNode> _subObject);
+	std::string parseUniqueName(Object const* _containingObject);
+	void addNamedSubObject(Object& _container, std::string_view _name, std::shared_ptr<ObjectNode> _subObject);
 
 	Dialect const& m_dialect;
 };

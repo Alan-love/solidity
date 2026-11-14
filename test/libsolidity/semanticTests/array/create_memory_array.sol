@@ -16,7 +16,9 @@ contract C {
         return (x[199], y[203][1], z[170].a[1], z[170].b[99]);
     }
 }
-// ====
-// compileViaYul: also
 // ----
 // f() -> "A", 8, 4, "B"
+// gas irOptimized: 136661
+// gas legacy: 121380
+// gas legacyOptimized: 115488
+// gas ssaCFGOptimized: 133225

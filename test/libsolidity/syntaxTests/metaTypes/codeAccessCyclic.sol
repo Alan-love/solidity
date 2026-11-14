@@ -8,5 +8,7 @@ contract B {
         type(A).runtimeCode;
     }
 }
+// ====
 // ----
-// TypeError 4224: (133-152): Circular reference for contract code access.
+// TypeError 7813: (52-71): Circular reference to contract bytecode either via "new" or "type(...).creationCode" / "type(...).runtimeCode".
+// TypeError 7813: (133-152): Circular reference to contract bytecode either via "new" or "type(...).creationCode" / "type(...).runtimeCode".

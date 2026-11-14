@@ -9,6 +9,7 @@ library L {
     function get(Item storage _item) external view {}
 }
 ==== Source: B ====
+pragma abicoder v1;
 import "A";
 
 contract Test {
@@ -18,4 +19,6 @@ contract Test {
         L.get(item);
     }
 }
+// ====
 // ----
+// Warning 9511: (B:0-19): ABI coder v1 is deprecated and scheduled for removal. Use ABI coder v2 instead.

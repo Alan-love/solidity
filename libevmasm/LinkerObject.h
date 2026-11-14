@@ -34,6 +34,7 @@ namespace solidity::evmasm
  */
 struct LinkerObject
 {
+	using ImmutableRefs = std::pair<std::string, std::vector<size_t>>;
 	/// The bytecode.
 	bytes bytecode;
 
@@ -43,7 +44,49 @@ struct LinkerObject
 
 	/// Map from hashes of the identifiers of immutable variables to the full identifier of the immutable and
 	/// to a list of offsets into the bytecode that refer to their values.
-	std::map<u256, std::pair<std::string, std::vector<size_t>>> immutableReferences;
+	std::map<u256, ImmutableRefs> immutableReferences;
+
+	struct InstructionLocation
+	{
+		/// Absolute position of instruction's opcode within the bytecode.
+		/// The opcode takes up exactly one byte and is assumed to be followed by its immediate arguments.
+		size_t start{};
+		/// Absolute position of the first byte past the end of the instruction, including potential immediate arguments.
+		size_t end{};
+		/// Index of the AssemblyItem that produced the instruction within the Assembly.
+		/// While items of most types generate a single instruction, in general it can be more than one.
+		size_t assemblyItemIndex{};
+	};
+	struct CodeSectionLocation
+	{
+		/// Absolute position of the first byte belonging to the code section.
+		/// Equal to instructionLocations[0].start if the code section is not empty.
+		size_t start{};
+		/// Absolute position of the first byte past end of the code section.
+		/// Greater or equal to start. Must be equal if instructionLocations is empty.
+		size_t end{};
+		/// Descriptions of all instructions contained within the code section.
+		/// The instructions are assumed to fill the whole section, without any gaps or duplicates.
+		/// The areas between opcodes are assumed to contain their immediate arguments, of size appropriate for the opcode type.
+		/// The arguments of the last instruction extend to the end of the section.
+		/// The instructions must be ordered according to their positions (ascending).
+		std::vector<InstructionLocation> instructionLocations;
+	};
+	/// Description of the code section of the assembly.
+	/// Only instructions belonging to the top-level assembly are included, even if the bytecode contains subassemblies.
+	CodeSectionLocation codeSectionLocation;
+
+	struct FunctionDebugData
+	{
+		std::optional<size_t> bytecodeOffset;
+		std::optional<size_t> instructionIndex;
+		std::optional<size_t> sourceID;
+		size_t params = {};
+		size_t returns = {};
+	};
+
+	/// Bytecode offsets of named tags like function entry points.
+	std::map<std::string, FunctionDebugData> functionDebugData;
 
 	/// Appends the bytecode of @a _other and incorporates its link references.
 	void append(LinkerObject const& _other);
@@ -59,6 +102,8 @@ struct LinkerObject
 	/// address (enclosed by `__` on both sides). The placeholder is the hex representation
 	/// of the first 18 bytes of the keccak-256 hash of @a _libraryName.
 	static std::string libraryPlaceholder(std::string const& _libraryName);
+
+	bool operator<(LinkerObject const& _other) const;
 
 private:
 	static util::h160 const* matchLibrary(

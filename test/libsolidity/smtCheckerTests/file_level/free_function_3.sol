@@ -1,5 +1,5 @@
-pragma experimental SMTChecker;
 function f() view {}
+// ====
+// SMTEngine: all
 // ----
-// Warning 6660: (32-52): Model checker analysis was not possible because file level functions are not supported.
-// Warning 6660: (32-52): Model checker analysis was not possible because file level functions are not supported.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 set -e
 
-function error() {
+function error
+{
   echo >&2 "ERROR: ${1} Aborting." && false
 }
 
-function warning() {
+function warning
+{
   echo >&2 "WARNING: ${1}"
 }
 
@@ -49,7 +51,18 @@ docker build "scripts/docker/${IMAGE_NAME}" --file "scripts/docker/${IMAGE_NAME}
 
 echo "-- test_docker @ '${PWD}'"
 
-docker run --rm --volume "${PWD}:/root/project" "${IMAGE_NAME}" "/root/project/scripts/ci/${IMAGE_NAME}_test_${IMAGE_VARIANT}.sh"
+# NOTE: Since /project/ is a dir from outside the container and the owner of the files is different,
+# git show in the script refuses to work. It must be marked as safe to use first.
+# See https://github.blog/2022-04-12-git-security-vulnerability-announced/
+docker run \
+  --rm \
+  --volume "${PWD}:/project" \
+  -e CCACHE_DIR=/tmp/ccache \
+  "${IMAGE_NAME}" \
+  bash -c "
+    git config --global --add safe.directory /project &&
+    '/project/scripts/ci/${IMAGE_NAME}_test_${IMAGE_VARIANT}.sh'
+  "
 
 echo "-- push_docker"
 

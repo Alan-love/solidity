@@ -16,7 +16,7 @@
 */
 // SPDX-License-Identifier: GPL-3.0
 /**
- * Unit tests for the StringUtils routines.
+ * Unit tests for the CommonData routines.
  */
 
 #include <libsolutil/Common.h>
@@ -28,7 +28,6 @@
 
 #include <boost/test/unit_test.hpp>
 
-using namespace std;
 using namespace solidity::frontend;
 
 // TODO: Fix Boost...
@@ -77,7 +76,6 @@ BOOST_AUTO_TEST_CASE(tohex_uint8)
 	BOOST_CHECK_EQUAL(toHex(0xaa), "aa");
 	BOOST_CHECK_EQUAL(toHex(0xaa, HexCase::Lower), "aa");
 	BOOST_CHECK_EQUAL(toHex(0xaa, HexCase::Upper), "AA");
-	BOOST_CHECK_THROW(toHex(0xaa, HexCase::Mixed), BadHexCase);
 	// Defaults to lower case on invalid setting.
 	BOOST_CHECK_EQUAL(toHex(0xaa, static_cast<HexCase>(42)), "aa");
 }
@@ -86,13 +84,11 @@ BOOST_AUTO_TEST_CASE(tohex_bytes)
 {
 	BOOST_CHECK_EQUAL(toHex(fromHex("00112233445566778899aAbBcCdDeEfF"), HexPrefix::DontAdd, HexCase::Lower), "00112233445566778899aabbccddeeff");
 	BOOST_CHECK_EQUAL(toHex(fromHex("00112233445566778899aAbBcCdDeEfF"), HexPrefix::DontAdd, HexCase::Upper), "00112233445566778899AABBCCDDEEFF");
-	BOOST_CHECK_EQUAL(toHex(fromHex("00112233445566778899aAbBcCdDeEfF"), HexPrefix::DontAdd, HexCase::Mixed), "00112233445566778899aabbCCDDeeff");
 	// Defaults to lower case on invalid setting.
 	BOOST_CHECK_EQUAL(toHex(fromHex("00112233445566778899aAbBcCdDeEfF"), HexPrefix::DontAdd, static_cast<HexCase>(42)), "00112233445566778899aabbccddeeff");
 
 	BOOST_CHECK_EQUAL(toHex(fromHex("00112233445566778899aAbBcCdDeEfF"), HexPrefix::Add, HexCase::Lower), "0x00112233445566778899aabbccddeeff");
 	BOOST_CHECK_EQUAL(toHex(fromHex("00112233445566778899aAbBcCdDeEfF"), HexPrefix::Add, HexCase::Upper), "0x00112233445566778899AABBCCDDEEFF");
-	BOOST_CHECK_EQUAL(toHex(fromHex("00112233445566778899AaBbCcDdEeFf"), HexPrefix::Add, HexCase::Mixed), "0x00112233445566778899aabbCCDDeeff");
 	// Defaults to lower case on invalid setting.
 	BOOST_CHECK_EQUAL(toHex(fromHex("00112233445566778899aAbBcCdDeEfF"), HexPrefix::Add, static_cast<HexCase>(42)), "0x00112233445566778899aabbccddeeff");
 }

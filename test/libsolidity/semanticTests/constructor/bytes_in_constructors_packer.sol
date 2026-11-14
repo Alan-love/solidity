@@ -5,7 +5,7 @@ contract Base {
         m_x = x;
         m_s = s;
     }
-    function part(uint i) public returns (byte) {
+    function part(uint i) public returns (bytes1) {
         return m_s[i];
     }
 }
@@ -16,13 +16,19 @@ contract Main is Base {
     }
 }
 contract Creator {
-    function f(uint x, bytes memory s) public returns (uint r, byte ch) {
+    function f(uint x, bytes memory s) public returns (uint r, bytes1 ch) {
         Main c = new Main(s, x);
         r = c.m_x();
         ch = c.part(x);
     }
 }
-// ====
-// compileViaYul: also
 // ----
 // f(uint256,bytes): 7, 0x40, 78, "abcdefghijklmnopqrstuvwxyzabcdef", "ghijklmnopqrstuvwxyzabcdefghijkl", "mnopqrstuvwxyz" -> 7, "h"
+// gas irOptimized: 169288
+// gas irOptimized code: 99400
+// gas legacy: 172946
+// gas legacy code: 239800
+// gas legacyOptimized: 169823
+// gas legacyOptimized code: 118600
+// gas ssaCFGOptimized: 169271
+// gas ssaCFGOptimized code: 100400

@@ -11,12 +11,13 @@ contract A {
 
 contract B {
     modifier validate() virtual {
-        A(0x00).get();
+        A(address(0x00)).get();
         _;
     }
 }
 
 ==== Source: B ====
+pragma abicoder v1;
 import "A";
 
 contract C is B {
@@ -26,4 +27,7 @@ contract C is B {
         _;
     }
 }
+// ====
 // ----
+// Warning 8429: (A:156-234): Virtual modifiers are deprecated and scheduled for removal.
+// Warning 9511: (B:0-19): ABI coder v1 is deprecated and scheduled for removal. Use ABI coder v2 instead.

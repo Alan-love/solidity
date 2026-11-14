@@ -1,0 +1,19 @@
+{
+	"language": "Solidity",
+	"sources": {
+		"C": {"urls": ["in.sol"]}
+	},
+	"settings": {
+		"experimental": true,
+		"viaIR": true,
+		"debug": {
+			"debugInfo": [
+				"ast-id",
+				"ethdebug"
+			]
+		},
+		"outputSelection": {
+			"*": {"*": ["metadata", "ir"]}
+		}
+	}
+}

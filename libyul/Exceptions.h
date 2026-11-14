@@ -24,16 +24,53 @@
 #include <libsolutil/Exceptions.h>
 #include <libsolutil/Assertions.h>
 
+#include <libyul/YulName.h>
+
+#include <boost/preprocessor/cat.hpp>
+#include <boost/preprocessor/facilities/empty.hpp>
+#include <boost/preprocessor/facilities/overload.hpp>
+
 namespace solidity::yul
 {
 
 struct YulException: virtual util::Exception {};
 struct OptimizerException: virtual YulException {};
 struct CodegenException: virtual YulException {};
-struct YulAssertion: virtual YulException {};
+struct YulAssertion: virtual util::Exception {};
+
+struct StackTooDeepError: virtual YulException
+{
+	StackTooDeepError(YulName _variable, int _depth, std::string const& _message):
+		variable(_variable), depth(_depth)
+	{
+		*this << util::errinfo_comment(_message);
+	}
+	StackTooDeepError(YulName _functionName, YulName _variable, int _depth, std::string const& _message):
+		functionName(_functionName), variable(_variable), depth(_depth)
+	{
+		*this << util::errinfo_comment(_message);
+	}
+	YulName functionName;
+	YulName variable;
+	int depth;
+};
 
 /// Assertion that throws an YulAssertion containing the given description if it is not met.
-#define yulAssert(CONDITION, DESCRIPTION) \
-	assertThrow(CONDITION, ::solidity::yul::YulAssertion, DESCRIPTION)
+#if !BOOST_PP_VARIADICS_MSVC
+#define yulAssert(...) BOOST_PP_OVERLOAD(yulAssert_,__VA_ARGS__)(__VA_ARGS__)
+#else
+#define yulAssert(...) BOOST_PP_CAT(BOOST_PP_OVERLOAD(yulAssert_,__VA_ARGS__)(__VA_ARGS__),BOOST_PP_EMPTY())
+#endif
+
+#define yulAssert_1(CONDITION) \
+	yulAssert_2((CONDITION), "")
+
+#define yulAssert_2(CONDITION, DESCRIPTION) \
+	assertThrowWithDefaultDescription( \
+		(CONDITION), \
+		::solidity::yul::YulAssertion, \
+		(DESCRIPTION), \
+		"Yul assertion failed" \
+	)
 
 }

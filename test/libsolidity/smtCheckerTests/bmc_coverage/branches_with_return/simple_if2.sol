@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract C {
 
 	function test(uint256 a) public pure {
@@ -16,4 +14,5 @@ contract C {
 // ====
 // SMTEngine: bmc
 // ----
-// Warning 4661: (89-114): BMC: Assertion violation happens here.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.
+// Warning 4661: (56-81): BMC: Assertion violation happens here.

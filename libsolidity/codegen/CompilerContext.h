@@ -36,6 +36,7 @@
 #include <liblangutil/ErrorReporter.h>
 #include <liblangutil/EVMVersion.h>
 #include <libsolutil/Common.h>
+#include <libsolutil/ErrorCodes.h>
 
 #include <libyul/AsmAnalysisInfo.h>
 #include <libyul/backends/evm/EVMDialect.h>
@@ -45,8 +46,10 @@
 #include <stack>
 #include <queue>
 #include <utility>
+#include <limits>
 
-namespace solidity::frontend {
+namespace solidity::frontend
+{
 
 class Compiler;
 
@@ -62,7 +65,7 @@ public:
 		RevertStrings _revertStrings,
 		CompilerContext* _runtimeContext = nullptr
 	):
-		m_asm(std::make_shared<evmasm::Assembly>()),
+		m_asm(std::make_shared<evmasm::Assembly>(_evmVersion, _runtimeContext != nullptr, std::string{})),
 		m_evmVersion(_evmVersion),
 		m_revertStrings(_revertStrings),
 		m_reservedMemory{0},
@@ -71,7 +74,7 @@ public:
 		m_yulUtilFunctions(m_evmVersion, m_revertStrings, m_yulFunctionCollector)
 	{
 		if (m_runtimeContext)
-			m_runtimeSub = size_t(m_asm->newSub(m_runtimeContext->m_asm).data());
+			m_runtimeSub = evmasm::SubAssemblyID{m_asm->newSub(m_runtimeContext->m_asm).data()};
 	}
 
 	langutil::EVMVersion const& evmVersion() const { return m_evmVersion; }
@@ -104,6 +107,7 @@ public:
 	void setStackOffset(int _offset) { m_asm->setDeposit(_offset); }
 	void adjustStackOffset(int _adjustment) { m_asm->adjustDeposit(_adjustment); }
 	unsigned stackHeight() const { solAssert(m_asm->deposit() >= 0, ""); return unsigned(m_asm->deposit()); }
+	size_t reachableStackDepth() const { return m_evmVersion.reachableStackDepth(); }
 
 	bool isLocalVariable(Declaration const* _declaration) const;
 	bool isStateVariable(Declaration const* _declaration) const { return m_stateVariables.count(_declaration) != 0; }
@@ -119,6 +123,9 @@ public:
 	/// Sets the contract currently being compiled - the most derived one.
 	void setMostDerivedContract(ContractDefinition const& _contract) { m_mostDerivedContract = &_contract; }
 	ContractDefinition const& mostDerivedContract() const;
+
+	void setArithmetic(Arithmetic _value) { m_arithmetic = _value; }
+	Arithmetic arithmetic() const { return m_arithmetic; }
 
 	/// @returns the next function in the queue of functions that are still to be compiled
 	/// (i.e. that were referenced during compilation but where we did not yet generate code for).
@@ -189,10 +196,10 @@ public:
 	evmasm::AssemblyItem appendJumpToNew() { return m_asm->appendJump().tag(); }
 	/// Appends a JUMP to a tag already on the stack
 	CompilerContext& appendJump(evmasm::AssemblyItem::JumpType _jumpType = evmasm::AssemblyItem::JumpType::Ordinary);
-	/// Appends an INVALID instruction
-	CompilerContext& appendInvalid();
-	/// Appends a conditional INVALID instruction
-	CompilerContext& appendConditionalInvalid();
+	/// Appends code to revert with a Panic(uint256) error.
+	CompilerContext& appendPanic(util::PanicCode _code);
+	/// Appends code to revert with a Panic(uint256) error if the topmost stack element is nonzero.
+	CompilerContext& appendConditionalPanic(util::PanicCode _code);
 	/// Appends a REVERT(0, 0) call
 	/// @param _message is an optional revert message used in debug mode
 	CompilerContext& appendRevert(std::string const& _message = "");
@@ -212,14 +219,17 @@ public:
 	/// @returns a new tag without pushing any opcodes or data
 	evmasm::AssemblyItem newTag() { return m_asm->newTag(); }
 	/// @returns a new tag identified by name.
-	evmasm::AssemblyItem namedTag(std::string const& _name) { return m_asm->namedTag(_name); }
+	evmasm::AssemblyItem namedTag(std::string const& _name, size_t _params, size_t _returns, std::optional<uint64_t> _sourceID)
+	{
+		return m_asm->namedTag(_name, _params, _returns, _sourceID);
+	}
 	/// Adds a subroutine to the code (in the data section) and pushes its size (via a tag)
 	/// on the stack. @returns the pushsub assembly item.
 	evmasm::AssemblyItem addSubroutine(evmasm::AssemblyPointer const& _assembly) { return m_asm->appendSubroutine(_assembly); }
 	/// Pushes the size of the subroutine.
-	void pushSubroutineSize(size_t _subRoutine) { m_asm->pushSubroutineSize(_subRoutine); }
+	void pushSubroutineSize(evmasm::SubAssemblyID _subRoutine) { m_asm->pushSubroutineSize(_subRoutine); }
 	/// Pushes the offset of the subroutine.
-	void pushSubroutineOffset(size_t _subRoutine) { m_asm->pushSubroutineOffset(_subRoutine); }
+	void pushSubroutineOffset(evmasm::SubAssemblyID _subRoutine) { m_asm->pushSubroutineOffset(_subRoutine); }
 	/// Pushes the size of the final program
 	void appendProgramSize() { m_asm->appendProgramSize(); }
 	/// Adds data to the data section, pushes a reference to the stack
@@ -264,22 +274,22 @@ public:
 	);
 
 	/// If m_revertStrings is debug, @returns inline assembly code that
-	/// stores @param _message in memory position 0 and reverts.
+	/// stores @param _message at the free memory pointer and reverts.
 	/// Otherwise returns "revert(0, 0)".
 	std::string revertReasonIfDebug(std::string const& _message = "");
 
-	void optimizeYul(yul::Object& _object, yul::EVMDialect const& _dialect, OptimiserSettings const& _optimiserSetting, std::set<yul::YulString> const& _externalIdentifiers = {});
+	void optimizeYul(yul::Object& _object, OptimiserSettings const& _optimiserSetting, std::set<yul::YulName> const& _externalIdentifiers = {});
 
 	/// Appends arbitrary data to the end of the bytecode.
-	void appendAuxiliaryData(bytes const& _data) { m_asm->appendAuxiliaryDataToEnd(_data); }
+	void appendToAuxiliaryData(bytes const& _data) { m_asm->appendToAuxiliaryData(_data); }
 
 	/// Run optimisation step.
-	void optimise(OptimiserSettings const& _settings) { m_asm->optimise(translateOptimiserSettings(_settings)); }
+	void optimise(OptimiserSettings const& _settings) { m_asm->optimise(evmasm::Assembly::OptimiserSettings::translateSettings(_settings)); }
 
 	/// @returns the runtime context if in creation mode and runtime context is set, nullptr otherwise.
 	CompilerContext* runtimeContext() const { return m_runtimeContext; }
 	/// @returns the identifier of the runtime subroutine.
-	size_t runtimeSub() const { return m_runtimeSub; }
+	evmasm::SubAssemblyID runtimeSub() const { return m_runtimeSub; }
 
 	/// @returns a const reference to the underlying assembly.
 	evmasm::Assembly const& assembly() const { return *m_asm; }
@@ -304,8 +314,6 @@ public:
 private:
 	/// Updates source location set in the assembly.
 	void updateSourceLocation();
-
-	evmasm::Assembly::OptimiserSettings translateOptimiserSettings(OptimiserSettings const& _settings);
 
 	/**
 	 * Helper class that manages function labels and ensures that referenced functions are
@@ -359,14 +367,16 @@ private:
 	/// modifier is applied twice, the position of the variable needs to be restored
 	/// after the nested modifier is left.
 	std::map<Declaration const*, std::vector<unsigned>> m_localVariables;
-	/// The contract currently being compiled. Virtual function lookup starts from this contarct.
+	/// The contract currently being compiled. Virtual function lookup starts from this contract.
 	ContractDefinition const* m_mostDerivedContract = nullptr;
+	/// Whether to use checked arithmetic.
+	Arithmetic m_arithmetic = Arithmetic::Checked;
 	/// Stack of current visited AST nodes, used for location attachment
 	std::stack<ASTNode const*> m_visitedNodes;
 	/// The runtime context if in Creation mode, this is used for generating tags that would be stored into the storage and then used at runtime.
-	CompilerContext *m_runtimeContext;
+	CompilerContext* m_runtimeContext;
 	/// The index of the runtime subroutine.
-	size_t m_runtimeSub = std::numeric_limits<size_t>::max();
+	evmasm::SubAssemblyID m_runtimeSub{};
 	/// An index of low-level function labels by name.
 	std::map<std::string, evmasm::AssemblyItem> m_lowLevelFunctions;
 	/// Collector for yul functions.

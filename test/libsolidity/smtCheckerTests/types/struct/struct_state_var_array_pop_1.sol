@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract C {
 	struct S {
 		uint x;
@@ -20,6 +18,11 @@ contract C {
 		s.a.pop();
 	}
 }
+// ====
+// SMTEngine: all
+// SMTIgnoreCex: yes
 // ----
-// Warning 2529: (121-130): CHC: Empty array "pop" happens here.\nCounterexample:\ns = {x: 0, a: []}\n_x = 0\n\n\nTransaction trace:\nconstructor()\nState: s = {x: 0, a: []}\nf(0)
-// Warning 6328: (230-254): CHC: Assertion violation happens here.\nCounterexample:\ns = {x: 7720, a: [7720, 0]}\n_x = 7720\n\n\nTransaction trace:\nconstructor()\nState: s = {x: 0, a: []}\nf(7720)
+// Warning 2529: (88-97): CHC: Empty array "pop" happens here.\nCounterexample:\ns = {x: 0, a: []}\n_x = 0\n\nTransaction trace:\nC.constructor()\nState: s = {x: 0, a: []}\nC.f(0)
+// Warning 6328: (197-221): CHC: Assertion violation happens here.\nCounterexample:\ns = {x: 32279, a: [32279, 0]}\n_x = 32279\n\nTransaction trace:\nC.constructor()\nState: s = {x: 0, a: []}\nC.f(32279)
+// Info 1391: CHC: 6 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

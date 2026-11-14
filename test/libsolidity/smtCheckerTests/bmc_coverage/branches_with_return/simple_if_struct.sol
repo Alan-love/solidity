@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract C {
 
 	struct S {
@@ -24,4 +22,6 @@ contract C {
 // ====
 // SMTEngine: bmc
 // ----
-// Warning 4661: (156-172): BMC: Assertion violation happens here.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.
+// Warning 4661: (123-139): BMC: Assertion violation happens here.
+// Info 6002: BMC: 1 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.

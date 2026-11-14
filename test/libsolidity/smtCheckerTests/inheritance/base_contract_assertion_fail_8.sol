@@ -1,0 +1,20 @@
+abstract contract A {
+	uint x;
+	function f() public view {
+		assert(x == 2);
+	}
+}
+
+contract C is  A {
+	function g() public {
+		x = 2;
+		f();
+		x = 0;
+	}
+}
+// ====
+// SMTEngine: all
+// SMTIgnoreCex: no
+// ----
+// Warning 6328: (61-75): CHC: Assertion violation happens here.\nCounterexample:\nx = 0\n\nTransaction trace:\nC.constructor()\nState: x = 0\nA.f()
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

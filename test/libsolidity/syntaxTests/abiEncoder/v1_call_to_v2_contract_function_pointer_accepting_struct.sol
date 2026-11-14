@@ -9,6 +9,7 @@ contract C {
     function get(Item memory _item) external {}
 }
 ==== Source: B ====
+pragma abicoder v1;
 import "A";
 
 contract Test {
@@ -19,4 +20,5 @@ contract Test {
     }
 }
 // ----
-// TypeError 2443: (B:146-155): The type of this parameter, struct C.Item, is only supported in ABI coder v2. Use "pragma abicoder v2;" to enable the feature.
+// Warning 9511: (B:0-19): ABI coder v1 is deprecated and scheduled for removal. Use ABI coder v2 instead.
+// TypeError 2443: (B:166-175): The type of this parameter, struct C.Item memory, is only supported in ABI coder v2. Use "pragma abicoder v2;" to enable the feature.

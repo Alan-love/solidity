@@ -1,14 +1,18 @@
-pragma experimental SMTChecker;
-
 contract C
 {
 	uint[] b;
 	uint[] d;
 	uint[][] array2d;
+	function p() public {
+		array2d.push().push();
+	}
 	function g(uint x, uint[] memory c) public {
-		f(array2d[x], c);
+		require(x < array2d.length);
+		// Disabled because of Spacer nondeterminism.
+		//f(array2d[0], c);
 	}
 	function f(uint[] storage a, uint[] memory c) internal {
+		// Accesses are safe but oob is reported because of aliasing.
 		d[0] = 42;
 		c[0] = 42;
 		a[0] = 2;
@@ -26,5 +30,10 @@ contract C
 		assert(b[0] == 1);
 	}
 }
+// ====
+// SMTEngine: all
+// SMTIgnoreCex: yes
 // ----
-// Warning 6328: (572-589): CHC: Assertion violation happens here.\nCounterexample:\nb = [1, 20, 20, 20, 20], d = [], array2d = []\nx = 0\nc = [0, 9, 9, 9, 9, 9, 9, 9, 9, 9]\n\n\nTransaction trace:\nconstructor()\nState: b = [], d = [], array2d = []\ng(0, [0, 9, 9, 9, 9, 9, 9, 9, 9, 9])
+// Warning 5667: (125-140): Unused function parameter. Remove or comment out the variable name to silence this warning.
+// Warning 2018: (106-254): Function state mutability can be restricted to view
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

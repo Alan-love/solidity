@@ -6,7 +6,7 @@ This section highlights the main breaking changes introduced in Solidity
 version 0.7.0, along with the reasoning behind the changes and how to update
 affected code.
 For the full list check
-`the release changelog <https://github.com/ethereum/solidity/releases/tag/v0.7.0>`_.
+`the release changelog <https://github.com/argotorg/solidity/releases/tag/v0.7.0>`_.
 
 
 Silent Changes of the Semantics
@@ -78,7 +78,7 @@ Mappings outside Storage
 Functions and Events
 --------------------
 
-* Visibility (``public`` / ``external``) is not needed for constructors anymore:
+* Visibility (``public`` / ``internal``) is not needed for constructors anymore:
   To prevent a contract from being created, it can be marked ``abstract``.
   This makes the visibility concept for constructors obsolete.
 

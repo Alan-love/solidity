@@ -5,8 +5,5 @@ contract C {
         return b;
     }
 }
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // f() -> 255

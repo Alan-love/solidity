@@ -20,14 +20,17 @@
 
 #include <test/Common.h>
 
+#include <test/libsolidity/util/SoltestErrors.h>
+
 #include <test/libyul/Common.h>
 
 #include <libyul/optimiser/Metrics.h>
 #include <libyul/AST.h>
+#include <libyul/Object.h>
+#include <libyul/YulStack.h>
 
 #include <boost/test/unit_test.hpp>
 
-using namespace std;
 using namespace solidity::langutil;
 
 namespace solidity::yul::test
@@ -36,11 +39,12 @@ namespace solidity::yul::test
 namespace
 {
 
-size_t codeSize(string const& _source, CodeWeights const _weights = {})
+size_t codeSize(std::string const& _source, CodeWeights const _weights = {})
 {
-	shared_ptr<Block> ast = parse(_source, false).first;
-	BOOST_REQUIRE(ast);
-	return CodeSize::codeSize(*ast, _weights);
+	YulStack yulStack = parseYul(_source);
+	solUnimplementedAssert(yulStack.parserResult()->subObjects.empty(), "Tests with subobjects not supported.");
+	soltestAssert(!yulStack.hasErrors());
+	return CodeSize::codeSize(yulStack.parserResult()->code()->root(), _weights);
 }
 
 }
@@ -296,7 +300,7 @@ BOOST_AUTO_TEST_CASE(regular_for_loop)
 {
 	BOOST_CHECK_EQUAL(codeSize(
 		"{ for { let x := 0 } lt(x, 10) { x := add(x, 1) } { mstore(x, 1) } }"
-	), 10);
+	), 9);
 }
 
 BOOST_FIXTURE_TEST_CASE(regular_for_loop_custom_weights, CustomWeightFixture)
@@ -307,7 +311,8 @@ BOOST_FIXTURE_TEST_CASE(regular_for_loop_custom_weights, CustomWeightFixture)
 		1 * m_weights.variableDeclarationCost +
 		1 * m_weights.assignmentCost +
 		3 * m_weights.functionCallCost +
-		4 * m_weights.literalCost +
+		3 * m_weights.literalCost +
+		1 * m_weights.literalZeroCost +
 		3 * m_weights.identifierCost +
 		1 * m_weights.expressionStatementCost
 	);

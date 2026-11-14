@@ -23,18 +23,23 @@
 #include <libevmasm/AssemblyItem.h>
 #include <libevmasm/LinkerObject.h>
 #include <libevmasm/Exceptions.h>
+#include <libevmasm/SubAssemblyID.h>
 
+#include <liblangutil/DebugInfoSelection.h>
 #include <liblangutil/EVMVersion.h>
 
 #include <libsolutil/Common.h>
 #include <libsolutil/Assertions.h>
 #include <libsolutil/Keccak256.h>
+#include <libsolutil/JSON.h>
 
-#include <json/json.h>
+#include <libsolidity/interface/OptimiserSettings.h>
 
 #include <iostream>
 #include <sstream>
 #include <memory>
+#include <map>
+#include <utility>
 
 namespace solidity::evmasm
 {
@@ -43,23 +48,36 @@ using AssemblyPointer = std::shared_ptr<Assembly>;
 
 class Assembly
 {
+	using TagRefs = std::map<size_t, std::pair<SubAssemblyID, size_t>>;
+	using DataRefs = std::multimap<util::h256, unsigned>;
+	using SubAssemblyRefs = std::multimap<SubAssemblyID, size_t>;
+	using ProgramSizeRefs = std::vector<unsigned>;
+	using LinkRef = std::pair<size_t, std::string>;
+
 public:
+	Assembly(langutil::EVMVersion _evmVersion, bool _creation, std::string _name):
+		m_evmVersion(_evmVersion),
+		m_creation(_creation),
+		m_name(std::move(_name))
+	{}
+
 	AssemblyItem newTag() { assertThrow(m_usedTags < 0xffffffff, AssemblyException, ""); return AssemblyItem(Tag, m_usedTags++); }
 	AssemblyItem newPushTag() { assertThrow(m_usedTags < 0xffffffff, AssemblyException, ""); return AssemblyItem(PushTag, m_usedTags++); }
+
 	/// Returns a tag identified by the given name. Creates it if it does not yet exist.
-	AssemblyItem namedTag(std::string const& _name);
+	AssemblyItem namedTag(std::string const& _name, size_t _params, size_t _returns, std::optional<uint64_t> _sourceID);
 	AssemblyItem newData(bytes const& _data) { util::h256 h(util::keccak256(util::asString(_data))); m_data[h] = _data; return AssemblyItem(PushData, h); }
 	bytes const& data(util::h256 const& _i) const { return m_data.at(_i); }
 	AssemblyItem newSub(AssemblyPointer const& _sub) { m_subs.push_back(_sub); return AssemblyItem(PushSub, m_subs.size() - 1); }
-	Assembly const& sub(size_t _sub) const { return *m_subs.at(_sub); }
-	Assembly& sub(size_t _sub) { return *m_subs.at(_sub); }
+	Assembly const& sub(SubAssemblyID const _sub) const	{ return *m_subs.at(_sub.asIndex()); }
+	Assembly& sub(SubAssemblyID const _sub) { return *m_subs.at(_sub.asIndex()); }
 	size_t numSubs() const { return m_subs.size(); }
 	AssemblyItem newPushSubSize(u256 const& _subId) { return AssemblyItem(PushSubSize, _subId); }
 	AssemblyItem newPushLibraryAddress(std::string const& _identifier);
 	AssemblyItem newPushImmutable(std::string const& _identifier);
 	AssemblyItem newImmutableAssignment(std::string const& _identifier);
 
-	AssemblyItem const& append(AssemblyItem const& _i);
+	AssemblyItem const& append(AssemblyItem _i);
 	AssemblyItem const& append(bytes const& _data) { return append(newData(_data)); }
 
 	template <class T> Assembly& operator<<(T const& _d) { append(_d); return *this; }
@@ -71,6 +89,11 @@ public:
 	void appendImmutable(std::string const& _identifier) { append(newPushImmutable(_identifier)); }
 	void appendImmutableAssignment(std::string const& _identifier) { append(newImmutableAssignment(_identifier)); }
 
+	void appendVerbatim(bytes _data, size_t _arguments, size_t _returnVariables)
+	{
+		append(AssemblyItem(std::move(_data), _arguments, _returnVariables));
+	}
+
 	AssemblyItem appendJump() { auto ret = append(newPushTag()); append(Instruction::JUMP); return ret; }
 	AssemblyItem appendJumpI() { auto ret = append(newPushTag()); append(Instruction::JUMPI); return ret; }
 	AssemblyItem appendJump(AssemblyItem const& _tag) { auto ret = append(_tag.pushTag()); append(Instruction::JUMP); return ret; }
@@ -79,122 +102,180 @@ public:
 	/// Adds a subroutine to the code (in the data section) and pushes its size (via a tag)
 	/// on the stack. @returns the pushsub assembly item.
 	AssemblyItem appendSubroutine(AssemblyPointer const& _assembly) { auto sub = newSub(_assembly); append(newPushSubSize(size_t(sub.data()))); return sub; }
-	void pushSubroutineSize(size_t _subRoutine) { append(newPushSubSize(_subRoutine)); }
+	void pushSubroutineSize(SubAssemblyID _subRoutine) { append(newPushSubSize(_subRoutine.value)); }
 	/// Pushes the offset of the subroutine.
-	void pushSubroutineOffset(size_t _subRoutine) { append(AssemblyItem(PushSub, _subRoutine)); }
+	void pushSubroutineOffset(SubAssemblyID _subRoutine) { append(AssemblyItem(PushSub, _subRoutine.value)); }
 
 	/// Appends @a _data literally to the very end of the bytecode.
-	void appendAuxiliaryDataToEnd(bytes const& _data) { m_auxiliaryData += _data; }
-
-	/// Returns the assembly items.
-	AssemblyItems const& items() const { return m_items; }
-
-	/// Returns the mutable assembly items. Use with care!
-	AssemblyItems& items() { return m_items; }
+	void appendToAuxiliaryData(bytes const& _data) { m_auxiliaryData += _data; }
 
 	int deposit() const { return m_deposit; }
-	void adjustDeposit(int _adjustment) { m_deposit += _adjustment; assertThrow(m_deposit >= 0, InvalidDeposit, ""); }
-	void setDeposit(int _deposit) { m_deposit = _deposit; assertThrow(m_deposit >= 0, InvalidDeposit, ""); }
+	void adjustDeposit(int _adjustment) { m_deposit += _adjustment; solAssert(m_deposit >= 0); }
+	void setDeposit(int _deposit) { m_deposit = _deposit; solAssert(m_deposit >= 0); }
+	std::string const& name() const { return m_name; }
 
 	/// Changes the source location used for each appended item.
 	void setSourceLocation(langutil::SourceLocation const& _location) { m_currentSourceLocation = _location; }
 	langutil::SourceLocation const& currentSourceLocation() const { return m_currentSourceLocation; }
+	langutil::EVMVersion const& evmVersion() const { return m_evmVersion; }
 
 	/// Assembles the assembly into bytecode. The assembly should not be modified after this call, since the assembled version is cached.
 	LinkerObject const& assemble() const;
 
 	struct OptimiserSettings
 	{
-		bool isCreation = false;
+		bool runInliner = false;
 		bool runJumpdestRemover = false;
 		bool runPeephole = false;
 		bool runDeduplicate = false;
 		bool runCSE = false;
 		bool runConstantOptimiser = false;
-		langutil::EVMVersion evmVersion;
+
+		using ExecutionCount = frontend::OptimiserSettings::ExecutionCount;
 		/// This specifies an estimate on how often each opcode in this assembly will be executed,
 		/// i.e. use a small value to optimise for size and a large value to optimise for runtime gas usage.
-		size_t expectedExecutionsPerDeployment = 200;
+		ExecutionCount expectedExecutionsPerDeployment = frontend::OptimiserSettings{}.expectedExecutionsPerDeployment;
+
+		static OptimiserSettings translateSettings(frontend::OptimiserSettings const& _settings);
 	};
 
 	/// Modify and return the current assembly such that creation and execution gas usage
 	/// is optimised according to the settings in @a _settings.
 	Assembly& optimise(OptimiserSettings const& _settings);
 
-	/// Modify (if @a _enable is set) and return the current assembly such that creation and
-	/// execution gas usage is optimised. @a _isCreation should be true for the top-level assembly.
-	/// @a _runs specifes an estimate on how often each opcode in this assembly will be executed,
-	/// i.e. use a small value to optimise for size and a large value to optimise for runtime.
-	/// If @a _enable is not set, will perform some simple peephole optimizations.
-	Assembly& optimise(bool _enable, langutil::EVMVersion _evmVersion, bool _isCreation, size_t _runs);
-
 	/// Create a text representation of the assembly.
 	std::string assemblyString(
+		langutil::DebugInfoSelection const& _debugInfoSelection = langutil::DebugInfoSelection::Default(),
 		StringMap const& _sourceCodes = StringMap()
 	) const;
 	void assemblyStream(
 		std::ostream& _out,
+		langutil::DebugInfoSelection const& _debugInfoSelection = langutil::DebugInfoSelection::Default(),
 		std::string const& _prefix = "",
 		StringMap const& _sourceCodes = StringMap()
 	) const;
 
 	/// Create a JSON representation of the assembly.
-	Json::Value assemblyJSON(
-		std::map<std::string, unsigned> const& _sourceIndices = std::map<std::string, unsigned>()
-	) const;
+	Json assemblyJSON(std::map<std::string, unsigned> const& _sourceIndices, bool _includeSourceList = true) const;
+
+	/// Constructs an @a Assembly from the serialized JSON representation.
+	/// @param _json JSON object containing assembly in the format produced by assemblyJSON().
+	/// @param _sourceList List of source files the assembly was built from. When the JSON represents
+	///     the root assembly, the function will read it from the 'sourceList' field and the parameter
+	///     must be empty. It is only used to pass the list down to recursive calls.
+	/// @param _level Nesting level of the current assembly in the assembly tree. The root is
+	///     at level 0 and the value increases down the tree. Necessary to distinguish between creation
+	///     and deployed objects.
+	/// @param _evmVersion EVM version targeted by the created assembly and all its sub-assemblies.
+	/// @returns Created @a Assembly and the source list read from the 'sourceList' field of the root
+	///     assembly or an empty list (in recursive calls).
+	static std::pair<std::shared_ptr<Assembly>, std::vector<std::string>> fromJSON(
+		Json const& _json,
+		std::vector<std::string> const& _sourceList,
+		size_t _level,
+		langutil::EVMVersion _evmVersion
+	);
 
 	/// Mark this assembly as invalid. Calling ``assemble`` on it will throw.
 	void markAsInvalid() { m_invalid = true; }
 
-	std::vector<size_t> decodeSubPath(size_t _subObjectId) const;
-	size_t encodeSubPath(std::vector<size_t> const& _subPath);
+	std::vector<SubAssemblyID> decodeSubPath(SubAssemblyID _subObjectId) const;
+	SubAssemblyID encodeSubPath(std::vector<SubAssemblyID> const& _subPath);
+
+	bool isCreation() const { return m_creation; }
+
+	AssemblyItems& items() { return m_items; }
+	AssemblyItems const& items() const { return m_items; }
 
 protected:
 	/// Does the same operations as @a optimise, but should only be applied to a sub and
 	/// returns the replaced tags. Also takes an argument containing the tags of this assembly
 	/// that are referenced in a super-assembly.
-	std::map<u256, u256> optimiseInternal(OptimiserSettings const& _settings, std::set<size_t> _tagsReferencedFromOutside);
+	std::map<u256, u256> const& optimiseInternal(OptimiserSettings const& _settings, std::set<size_t> _tagsReferencedFromOutside);
 
-	unsigned bytesRequired(unsigned subTagSize) const;
+	/// Calculates approximate size of "pure" code without data.
+	unsigned codeSize(unsigned subTagSize) const;
+
+	/// Add all assembly items from given JSON array. This function imports the items by iterating through
+	/// the code array. This method only works on clean Assembly objects that don't have any items defined yet.
+	/// @param _code JSON array that contains assembly items (e.g. json['.code'])
+	/// @param _sourceList List of source names.
+	void importAssemblyItemsFromJSON(Json const& _code, std::vector<std::string> const& _sourceList);
+
+	/// Creates an AssemblyItem from a given JSON representation.
+	/// @param _json JSON object that consists a single assembly item
+	/// @param _sourceList List of source names.
+	/// @returns AssemblyItem of _json argument.
+	AssemblyItem createAssemblyItemFromJSON(Json const& _json, std::vector<std::string> const& _sourceList);
 
 private:
-	static Json::Value createJsonValue(
-		std::string _name,
-		int _source,
-		int _begin,
-		int _end,
-		std::string _value = std::string(),
-		std::string _jumpType = std::string()
-	);
-	static std::string toStringInHex(u256 _value);
-
 	bool m_invalid = false;
 
-	Assembly const* subAssemblyById(size_t _subId) const;
+	Assembly const* subAssemblyById(SubAssemblyID _subId) const;
+
+	void encodeAllPossibleSubPathsInAssemblyTree(std::vector<SubAssemblyID> _pathFromRoot = {}, std::vector<Assembly*> _assembliesOnPath = {});
+
+	std::shared_ptr<std::string const> sharedSourceName(std::string const& _name) const;
+
+	LinkerObject const& assembleLegacy() const;
+
+	/// Assemble bytecode for AssemblyItem type.
+	[[nodiscard]] bytes assembleOperation(AssemblyItem const& _item) const;
+	[[nodiscard]] bytes assemblePush(AssemblyItem const& _item) const;
+	[[nodiscard]] std::pair<bytes, Assembly::LinkRef> assemblePushLibraryAddress(AssemblyItem const& _item, size_t _pos) const;
+	[[nodiscard]] bytes assembleVerbatimBytecode(AssemblyItem const& item) const;
+	[[nodiscard]] bytes assemblePushDeployTimeAddress() const;
+	[[nodiscard]] bytes assembleTag(AssemblyItem const& _item, size_t _pos, bool _addJumpDest) const;
 
 protected:
 	/// 0 is reserved for exception
 	unsigned m_usedTags = 1;
-	std::map<std::string, size_t> m_namedTags;
-	AssemblyItems m_items;
+
+	struct NamedTagInfo
+	{
+		size_t id;
+		std::optional<size_t> sourceID;
+		size_t params;
+		size_t returns;
+	};
+
+	std::map<std::string, NamedTagInfo> m_namedTags;
 	std::map<util::h256, bytes> m_data;
 	/// Data that is appended to the very end of the contract.
 	bytes m_auxiliaryData;
 	std::vector<std::shared_ptr<Assembly>> m_subs;
+	AssemblyItems m_items;
 	std::map<util::h256, std::string> m_strings;
 	std::map<util::h256, std::string> m_libraries; ///< Identifiers of libraries to be linked.
 	std::map<util::h256, std::string> m_immutables; ///< Identifiers of immutables.
 
 	/// Map from a vector representing a path to a particular sub assembly to sub assembly id.
 	/// This map is used only for sub-assemblies which are not direct sub-assemblies (where path is having more than one value).
-	std::map<std::vector<size_t>, size_t> m_subPaths;
+	/// Nested/indirect SubAssemblyIDs are assigned negative unsigned 64 bit integers, i.e., the `i`th indirect
+	/// index corresponds to `std::numeric_limits<std::uint64_t>::max() - i` in contrast to direct indices which occupy
+	/// the non-negative half of the index space.
+	std::map<std::vector<SubAssemblyID>, SubAssemblyID> m_subPaths;
+
+	/// Contains the tag replacements relevant for super-assemblies.
+	/// If set, it means the optimizer has run and we will not run it again.
+	std::optional<std::map<u256, u256>> m_tagReplacements;
 
 	mutable LinkerObject m_assembledObject;
 	mutable std::vector<size_t> m_tagPositionsInBytecode;
 
-	int m_deposit = 0;
+	langutil::EVMVersion m_evmVersion;
 
+	int m_deposit = 0;
+	/// True, if the assembly contains contract creation code.
+	bool const m_creation = false;
+	/// Internal name of the assembly object, only used with the Yul backend
+	/// currently
+	std::string m_name;
 	langutil::SourceLocation m_currentSourceLocation;
+
+	// FIXME: This being static means that the strings won't be freed when they're no longer needed
+	static std::map<std::string, std::shared_ptr<std::string const>> s_sharedSourceNames;
+
 public:
 	size_t m_currentModifierDepth = 0;
 };

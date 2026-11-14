@@ -1,11 +1,9 @@
-pragma experimental SMTChecker;
-
 contract C {
-	byte public x;
+	bytes1 public x;
 	bytes3 public y;
 
 	function f() public view {
-		byte a = this.x();
+		bytes1 a = this.x();
 		bytes3 b = this.y();
 		assert(a == x); // should hold
 		assert(a == 'a'); // should fail
@@ -13,6 +11,10 @@ contract C {
 		assert(y == "abc"); // should fail
 	}
 }
+// ====
+// SMTEngine: all
 // ----
-// Warning 6328: (188-204): CHC: Assertion violation happens here.\nCounterexample:\nx = 0, y = 0\n\n\n\nTransaction trace:\nconstructor()\nState: x = 0, y = 0\nf()
-// Warning 6328: (256-274): CHC: Assertion violation happens here.\nCounterexample:\nx = 0, y = 0\n\n\n\nTransaction trace:\nconstructor()\nState: x = 0, y = 0\nf()
+// Warning 6328: (159-175): CHC: Assertion violation happens here.\nCounterexample:\nx = 0x0, y = 0x0\na = 0x0\nb = 0x0\n\nTransaction trace:\nC.constructor()\nState: x = 0x0, y = 0x0\nC.f()
+// Warning 6328: (227-245): CHC: Assertion violation happens here.\nCounterexample:\nx = 0x0, y = 0x0\na = 0x0\nb = 0x0\n\nTransaction trace:\nC.constructor()\nState: x = 0x0, y = 0x0\nC.f()
+// Info 1391: CHC: 2 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

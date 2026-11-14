@@ -9,7 +9,8 @@ contract B {
     A a;
 
     fallback() external {
-        address(a).transfer(100);
+        payable(a).transfer(100);
     }
 }
 // ----
+// Warning 9207: (227-246): 'transfer' is deprecated and scheduled for removal. Use 'call{value: <amount>}("")' instead.

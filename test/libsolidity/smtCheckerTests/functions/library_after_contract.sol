@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract C {
 	function g(uint y) public {
 		uint z = L.f(y);
@@ -12,6 +10,9 @@ library L {
 		return x;
 	}
 }
-
+// ====
+// SMTEngine: all
 // ----
-// Warning 2018: (131-190): Function state mutability can be restricted to pure
+// Warning 2018: (98-157): Function state mutability can be restricted to pure
+// Info 1391: CHC: 1 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

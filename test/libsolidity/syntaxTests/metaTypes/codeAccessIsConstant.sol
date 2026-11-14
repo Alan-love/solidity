@@ -4,4 +4,5 @@ contract Test {
 
 }
 contract B { function f() public pure {} }
+// ====
 // ----

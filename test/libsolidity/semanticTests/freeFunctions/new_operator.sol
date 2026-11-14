@@ -11,7 +11,7 @@ contract D {
     return test();
   }
 }
-// ====
-// compileViaYul: also
 // ----
 // f() -> 2
+// gas legacy: 76611
+// gas legacy code: 23600

@@ -9,13 +9,21 @@ contract B3 { constructor() payable {} }
 contract C {
 	function f() public payable returns (bool) {
 		// Make sure none of these revert.
-		new B1{value: 10}();
-		new B2{value: 10}();
-		new B3{value: 10}();
+		new B1{value: 10, salt: hex"00"}();
+		new B2{value: 10, salt: hex"01"}();
+		new B3{value: 10, salt: hex"02"}();
 		return true;
 	}
 }
 // ====
-// compileViaYul: also
+// EVMVersion: >=constantinople
 // ----
 // f(), 2000 ether -> true
+// gas irOptimized: 117685
+// gas irOptimized code: 1800
+// gas legacy: 117889
+// gas legacy code: 4800
+// gas legacyOptimized: 117761
+// gas legacyOptimized code: 4800
+// gas ssaCFGOptimized: 117690
+// gas ssaCFGOptimized code: 1800

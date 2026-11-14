@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract C {
 	function f(bytes32 _x) public pure {
 		require(_x != "test");
@@ -9,6 +7,10 @@ contract C {
 		assert(y != "testx");
 	}
 }
+// ====
+// SMTEngine: all
+// SMTIgnoreCex: yes
 // ----
-// Warning 6328: (147-166): CHC: Assertion violation happens here.\nCounterexample:\n\n_x = 0\n\n\nTransaction trace:\nconstructor()\nf(0)
-// Warning 6328: (170-190): CHC: Assertion violation happens here.\nCounterexample:\n\n_x = 52647538830022687173130149211684818290356179572910782152375644828738034597888\n\n\nTransaction trace:\nconstructor()\nf(52647538830022687173130149211684818290356179572910782152375644828738034597888)
+// Warning 6328: (114-133): CHC: Assertion violation happens here.\nCounterexample:\n\n_x = 0x0\ny = 0x0\nz = 0x0\n\nTransaction trace:\nC.constructor()\nC.f(0x0)
+// Warning 6328: (137-157): CHC: Assertion violation happens here.\nCounterexample:\n\n_x = 0x7465737478000000000000000000000000000000000000000000000000000000\ny = 0x7465737478000000000000000000000000000000000000000000000000000000\nz = 0x7465737478000000000000000000000000000000000000000000000000000000\n\nTransaction trace:\nC.constructor()\nC.f(0x7465737478000000000000000000000000000000000000000000000000000000)
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

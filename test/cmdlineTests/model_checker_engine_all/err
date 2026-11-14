@@ -3,11 +3,12 @@ Counterexample:
 
 x = 0
 
-
 Transaction trace:
-constructor()
-f(0)
- --> model_checker_engine_all/input.sol:6:3:
+test.constructor()
+test.f(0)
+ --> input.sol:5:3:
   |
-6 | 		assert(x > 0);
+5 | 		assert(x > 0);
   | 		^^^^^^^^^^^^^
+
+Warning: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

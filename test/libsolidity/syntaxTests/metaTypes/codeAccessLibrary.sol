@@ -9,4 +9,5 @@ contract Test {
 contract Library {
     function f(uint) public pure returns (uint) {}
 }
+// ====
 // ----

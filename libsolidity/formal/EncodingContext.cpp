@@ -18,12 +18,18 @@
 
 #include <libsolidity/formal/EncodingContext.h>
 
+#include <libsolidity/ast/AST.h>
+
 #include <libsolidity/formal/SymbolicTypes.h>
 
-using namespace std;
 using namespace solidity;
 using namespace solidity::util;
 using namespace solidity::frontend::smt;
+
+bool EncodingContext::IdCompare::operator()(ASTNode const* lhs, ASTNode const* rhs) const
+{
+	return lhs->id() < rhs->id();
+}
 
 EncodingContext::EncodingContext():
 	m_state(*this)
@@ -49,15 +55,9 @@ unsigned EncodingContext::newUniqueId()
 	return m_nextUniqueId++;
 }
 
-void EncodingContext::clear()
-{
-	m_variables.clear();
-	reset();
-}
-
 /// Variables.
 
-shared_ptr<SymbolicVariable> EncodingContext::variable(frontend::VariableDeclaration const& _varDecl)
+std::shared_ptr<SymbolicVariable> EncodingContext::variable(frontend::VariableDeclaration const& _varDecl)
 {
 	solAssert(knownVariable(_varDecl), "");
 	return m_variables[&_varDecl];
@@ -67,7 +67,7 @@ bool EncodingContext::createVariable(frontend::VariableDeclaration const& _varDe
 {
 	solAssert(!knownVariable(_varDecl), "");
 	auto const& type = _varDecl.type();
-	auto result = newSymbolicVariable(*type, _varDecl.name() + "_" + to_string(_varDecl.id()), *this);
+	auto result = newSymbolicVariable(*type, _varDecl.name() + "_" + std::to_string(_varDecl.id()), *this);
 	m_variables.emplace(&_varDecl, result.second);
 	return result.first;
 }
@@ -83,13 +83,13 @@ void EncodingContext::resetVariable(frontend::VariableDeclaration const& _variab
 	setUnknownValue(_variable);
 }
 
-void EncodingContext::resetVariables(set<frontend::VariableDeclaration const*> const& _variables)
+void EncodingContext::resetVariables(std::set<frontend::VariableDeclaration const*> const& _variables)
 {
 	for (auto const* decl: _variables)
 		resetVariable(*decl);
 }
 
-void EncodingContext::resetVariables(function<bool(frontend::VariableDeclaration const&)> const& _filter)
+void EncodingContext::resetVariables(std::function<bool(frontend::VariableDeclaration const&)> const& _filter)
 {
 	for_each(begin(m_variables), end(m_variables), [&](auto _variable)
 	{
@@ -133,14 +133,14 @@ void EncodingContext::setUnknownValue(SymbolicVariable& _variable)
 
 /// Expressions
 
-shared_ptr<SymbolicVariable> EncodingContext::expression(frontend::Expression const& _e)
+std::shared_ptr<SymbolicVariable> EncodingContext::expression(frontend::Expression const& _e)
 {
 	if (!knownExpression(_e))
 		createExpression(_e);
 	return m_expressions.at(&_e);
 }
 
-bool EncodingContext::createExpression(frontend::Expression const& _e, shared_ptr<SymbolicVariable> _symbVar)
+bool EncodingContext::createExpression(frontend::Expression const& _e, std::shared_ptr<SymbolicVariable> _symbVar)
 {
 	solAssert(_e.annotation().type, "");
 	if (knownExpression(_e))
@@ -155,7 +155,7 @@ bool EncodingContext::createExpression(frontend::Expression const& _e, shared_pt
 	}
 	else
 	{
-		auto result = newSymbolicVariable(*_e.annotation().type, "expr_" + to_string(_e.id()), *this);
+		auto result = newSymbolicVariable(*_e.annotation().type, "expr_" + std::to_string(_e.id()), *this);
 		m_expressions.emplace(&_e, result.second);
 		return result.first;
 	}
@@ -168,13 +168,13 @@ bool EncodingContext::knownExpression(frontend::Expression const& _e) const
 
 /// Global variables and functions.
 
-shared_ptr<SymbolicVariable> EncodingContext::globalSymbol(string const& _name)
+std::shared_ptr<SymbolicVariable> EncodingContext::globalSymbol(std::string const& _name)
 {
 	solAssert(knownGlobalSymbol(_name), "");
 	return m_globalContext.at(_name);
 }
 
-bool EncodingContext::createGlobalSymbol(string const& _name, frontend::Expression const& _expr)
+bool EncodingContext::createGlobalSymbol(std::string const& _name, frontend::Expression const& _expr)
 {
 	solAssert(!knownGlobalSymbol(_name), "");
 	auto result = newSymbolicVariable(*_expr.annotation().type, _name, *this);
@@ -183,7 +183,7 @@ bool EncodingContext::createGlobalSymbol(string const& _name, frontend::Expressi
 	return result.first;
 }
 
-bool EncodingContext::knownGlobalSymbol(string const& _var) const
+bool EncodingContext::knownGlobalSymbol(std::string const& _var) const
 {
 	return m_globalContext.count(_var);
 }
@@ -217,5 +217,5 @@ void EncodingContext::addAssertion(smtutil::Expression const& _expr)
 	if (m_assertions.empty())
 		m_assertions.push_back(_expr);
 	else
-		m_assertions.back() = _expr && move(m_assertions.back());
+		m_assertions.back() = _expr && std::move(m_assertions.back());
 }

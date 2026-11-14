@@ -13,10 +13,6 @@ contract C {
         }
     }
 }
-
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // f() -> FAILURE
 // a() -> 42

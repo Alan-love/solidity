@@ -18,17 +18,22 @@
 
 #include <test/libyul/ObjectCompilerTest.h>
 
-#include <libsolutil/AnsiColorized.h>
+#include <test/libsolidity/util/SoltestErrors.h>
 
-#include <libyul/AssemblyStack.h>
+#include <test/Common.h>
+#include <test/libyul/Common.h>
 
+#include <libyul/YulStack.h>
+
+#include <libevmasm/Assembly.h>
+#include <libevmasm/Disassemble.h>
 #include <libevmasm/Instruction.h>
 
-#include <liblangutil/SourceReferenceFormatter.h>
+#include <liblangutil/DebugInfoSelection.h>
 
 #include <boost/algorithm/string.hpp>
 
-#include <fstream>
+#include <ostream>
 
 using namespace solidity;
 using namespace solidity::util;
@@ -37,67 +42,69 @@ using namespace solidity::yul;
 using namespace solidity::yul::test;
 using namespace solidity::frontend;
 using namespace solidity::frontend::test;
-using namespace std;
 
-ObjectCompilerTest::ObjectCompilerTest(string const& _filename):
-	TestCase(_filename)
+ObjectCompilerTest::ObjectCompilerTest(std::string const& _filename):
+	solidity::frontend::test::EVMVersionRestrictedTestCase(_filename)
 {
 	m_source = m_reader.source();
-	m_optimize = m_reader.boolSetting("optimize", false);
-	m_wasm = m_reader.boolSetting("wasm", false);
+	m_optimisationPreset = m_reader.enumSetting<OptimisationPreset>(
+		"optimizationPreset",
+		{
+			{"none", OptimisationPreset::None},
+			{"minimal", OptimisationPreset::Minimal},
+			{"standard", OptimisationPreset::Standard},
+			{"full", OptimisationPreset::Full},
+		},
+		"minimal"
+	);
+
+	constexpr std::array allowedOutputs = {"Assembly", "Bytecode", "Opcodes", "SourceMappings"};
+	boost::split(m_outputSetting, m_reader.stringSetting("outputs", "Assembly,Bytecode,Opcodes,SourceMappings"), boost::is_any_of(","));
+	for (auto const& output: m_outputSetting)
+		if (std::find(allowedOutputs.begin(), allowedOutputs.end(), output) == allowedOutputs.end())
+			BOOST_THROW_EXCEPTION(std::runtime_error{"Invalid output type: \"" + output + "\""});
+
 	m_expectation = m_reader.simpleExpectations();
 }
 
-TestCase::TestResult ObjectCompilerTest::run(ostream& _stream, string const& _linePrefix, bool const _formatted)
+TestCase::TestResult ObjectCompilerTest::run(std::ostream& _stream, std::string const& _linePrefix, bool const _formatted)
 {
-	AssemblyStack stack(
-		EVMVersion(),
-		m_wasm ? AssemblyStack::Language::Ewasm : AssemblyStack::Language::StrictAssembly,
-		m_optimize ? OptimiserSettings::full() : OptimiserSettings::minimal()
-	);
-	if (!stack.parseAndAnalyze("source", m_source))
+	YulStack yulStack = parseYul(m_source, "source", OptimiserSettings::preset(m_optimisationPreset));
+	MachineAssemblyObject obj;
+	if (!yulStack.hasErrors())
 	{
-		AnsiColorized(_stream, _formatted, {formatting::BOLD, formatting::RED}) << _linePrefix << "Error parsing source." << endl;
-		printErrors(_stream, stack.errors());
+		yulStack.optimize();
+		obj = yulStack.assemble(YulStack::Machine::EVM);
+	}
+	if (yulStack.hasErrors())
+	{
+		printYulErrors(yulStack, _stream, _linePrefix, _formatted);
 		return TestResult::FatalError;
 	}
-	stack.optimize();
 
-	if (m_wasm)
-	{
-		MachineAssemblyObject obj = stack.assemble(AssemblyStack::Machine::Ewasm);
-		solAssert(obj.bytecode, "");
+	solAssert(obj.bytecode);
+	solAssert(obj.sourceMappings);
 
-		m_obtainedResult = "Text:\n" + obj.assembly + "\n";
-		m_obtainedResult += "Binary:\n" + toHex(obj.bytecode->bytecode) + "\n";
-	}
+	if (std::find(m_outputSetting.begin(), m_outputSetting.end(), "Assembly") != m_outputSetting.end())
+		m_obtainedResult = "Assembly:\n" + obj.assembly->assemblyString(yulStack.debugInfoSelection());
+	if (obj.bytecode->bytecode.empty())
+		m_obtainedResult += "-- empty bytecode --\n";
 	else
 	{
-		MachineAssemblyObject obj = stack.assemble(AssemblyStack::Machine::EVM);
-		solAssert(obj.bytecode, "");
-		solAssert(obj.sourceMappings, "");
-
-		m_obtainedResult = "Assembly:\n" + obj.assembly;
-		if (obj.bytecode->bytecode.empty())
-			m_obtainedResult += "-- empty bytecode --\n";
-		else
-			m_obtainedResult +=
-				"Bytecode: " +
-				toHex(obj.bytecode->bytecode) +
-				"\nOpcodes: " +
-				boost::trim_copy(evmasm::disassemble(obj.bytecode->bytecode)) +
-				"\nSourceMappings:" +
-				(obj.sourceMappings->empty() ? "" : " " + *obj.sourceMappings) +
-				"\n";
+		if (std::find(m_outputSetting.begin(), m_outputSetting.end(), "Bytecode") != m_outputSetting.end())
+			m_obtainedResult += "Bytecode: " + util::toHex(obj.bytecode->bytecode);
+		if (std::find(m_outputSetting.begin(), m_outputSetting.end(), "Opcodes") != m_outputSetting.end())
+		{
+			m_obtainedResult += (!m_obtainedResult.empty() && m_obtainedResult.back() != '\n') ? "\n" : "";
+			m_obtainedResult += "Opcodes: " +
+				boost::trim_copy(evmasm::disassemble(obj.bytecode->bytecode, solidity::test::CommonOptions::get().evmVersion()));
+		}
+		if (std::find(m_outputSetting.begin(), m_outputSetting.end(), "SourceMappings") != m_outputSetting.end())
+		{
+			m_obtainedResult += (!m_obtainedResult.empty() && m_obtainedResult.back() != '\n') ? "\n" : "";
+			m_obtainedResult += "SourceMappings:" + (obj.sourceMappings->empty() ? "" : " " + *obj.sourceMappings) + "\n";
+		}
 	}
 
 	return checkResult(_stream, _linePrefix, _formatted);
-}
-
-void ObjectCompilerTest::printErrors(ostream& _stream, ErrorList const& _errors)
-{
-	SourceReferenceFormatter formatter(_stream);
-
-	for (auto const& error: _errors)
-		formatter.printErrorInformation(*error);
 }

@@ -1,38 +1,34 @@
 Optimized IR:
-/*******************************************************
- *                       WARNING                       *
- *  Solidity to Yul compilation is still EXPERIMENTAL  *
- *       It can result in LOSS OF FUNDS or worse       *
- *                !USE AT YOUR OWN RISK!               *
- *******************************************************/
-
+/// @use-src 0:"input.sol"
 object "D_8" {
     code {
         {
-            mstore(64, 128)
+            /// @src 0:82:166  "contract D {..."
+            let _1 := memoryguard(128)
+            mstore(64, _1)
             if callvalue() { revert(0, 0) }
-            let _1 := datasize("D_8_deployed")
-            codecopy(0, dataoffset("D_8_deployed"), _1)
-            return(0, _1)
+            let _2 := datasize("D_8_deployed")
+            codecopy(_1, dataoffset("D_8_deployed"), _2)
+            return(_1, _2)
         }
     }
+    /// @use-src 0:"input.sol"
     object "D_8_deployed" {
         code {
             {
-                mstore(64, 128)
-                if iszero(lt(calldatasize(), 4))
+                /// @src 0:82:166  "contract D {..."
+                if gt(calldatasize(), 3)
                 {
-                    let _1 := 0
-                    if eq(0x26121ff0, shr(224, calldataload(_1)))
+                    if eq(0x26121ff0, shr(224, calldataload(0)))
                     {
-                        if callvalue() { revert(_1, _1) }
-                        if slt(add(calldatasize(), not(3)), _1) { revert(_1, _1) }
-                        mstore(64, 128)
-                        return(128, _1)
+                        if callvalue() { revert(0, 0) }
+                        if slt(add(calldatasize(), not(3)), 0) { revert(0, 0) }
+                        return(0, 0)
                     }
                 }
                 revert(0, 0)
             }
         }
+        data ".metadata" hex"<BYTECODE REMOVED>"
     }
 }

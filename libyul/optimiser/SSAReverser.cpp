@@ -22,7 +22,6 @@
 
 #include <variant>
 
-using namespace std;
 using namespace solidity;
 using namespace solidity::yul;
 
@@ -38,7 +37,7 @@ void SSAReverser::operator()(Block& _block)
 	walkVector(_block.statements);
 	util::iterateReplacingWindow<2>(
 		_block.statements,
-		[&](Statement& _stmt1, Statement& _stmt2) -> std::optional<vector<Statement>>
+		[&](Statement& _stmt1, Statement& _stmt2) -> std::optional<std::vector<Statement>>
 		{
 			auto* varDecl = std::get_if<VariableDeclaration>(&_stmt1);
 
@@ -66,12 +65,12 @@ void SSAReverser::operator()(Block& _block)
 					else
 						return util::make_vector<Statement>(
 							Assignment{
-								std::move(assignment->location),
+								std::move(assignment->debugData),
 								assignment->variableNames,
 								std::move(varDecl->value)
 							},
 							VariableDeclaration{
-								std::move(varDecl->location),
+								std::move(varDecl->debugData),
 								std::move(varDecl->variables),
 								std::make_unique<Expression>(assignment->variableNames.front())
 							}
@@ -97,17 +96,17 @@ void SSAReverser::operator()(Block& _block)
 				)
 				{
 					auto varIdentifier2 = std::make_unique<Expression>(Identifier{
-						varDecl2->variables.front().location,
+						varDecl2->variables.front().debugData,
 						varDecl2->variables.front().name
 					});
 					return util::make_vector<Statement>(
 						VariableDeclaration{
-							std::move(varDecl2->location),
+							std::move(varDecl2->debugData),
 							std::move(varDecl2->variables),
 							std::move(varDecl->value)
 						},
 						VariableDeclaration{
-							std::move(varDecl->location),
+							std::move(varDecl->debugData),
 							std::move(varDecl->variables),
 							std::move(varIdentifier2)
 						}

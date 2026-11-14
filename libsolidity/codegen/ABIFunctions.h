@@ -32,6 +32,7 @@
 
 #include <functional>
 #include <map>
+#include <source_location>
 #include <vector>
 
 namespace solidity::frontend
@@ -41,8 +42,7 @@ class Type;
 class ArrayType;
 class StructType;
 class FunctionType;
-using TypePointer = Type const*;
-using TypePointers = std::vector<TypePointer>;
+using TypePointers = std::vector<Type const*>;
 
 /**
  * Class to generate encoding and decoding functions. Also maintains a collection
@@ -79,7 +79,7 @@ public:
 	/// If @reversed is true, the order of the variables after <headStart> is reversed.
 	std::string tupleEncoder(
 		TypePointers const& _givenTypes,
-		TypePointers const& _targetTypes,
+		TypePointers _targetTypes,
 		bool _encodeAsLibraryTypes = false,
 		bool _reversed = false
 	);
@@ -106,7 +106,7 @@ public:
 	/// If @reversed is true, the order of the variables after <headStart> is reversed.
 	std::string tupleEncoderPacked(
 		TypePointers const& _givenTypes,
-		TypePointers const& _targetTypes,
+		TypePointers _targetTypes,
 		bool _reversed = false
 	);
 
@@ -244,7 +244,7 @@ private:
 	std::string abiDecodingFunctionArray(ArrayType const& _type, bool _fromMemory);
 	/// Part of @a abiDecodingFunction for calldata array types.
 	std::string abiDecodingFunctionCalldataArray(ArrayType const& _type);
-	/// Part of @a abiDecodingFunctionArrayWithAvailableLength
+	/// Part of @a abiDecodingFunctionArrayAvailableLength
 	std::string abiDecodingFunctionByteArrayAvailableLength(ArrayType const& _type, bool _fromMemory);
 	/// Part of @a abiDecodingFunction for calldata struct types.
 	std::string abiDecodingFunctionCalldataStruct(StructType const& _type);
@@ -263,7 +263,11 @@ private:
 	/// Helper function that uses @a _creator to create a function and add it to
 	/// @a m_requestedFunctions if it has not been created yet and returns @a _name in both
 	/// cases.
-	std::string createFunction(std::string const& _name, std::function<std::string()> const& _creator);
+	std::string createFunction(
+		std::string const& _name,
+		std::function<std::string()> const& _creator,
+		std::source_location _site = std::source_location::current()
+	);
 
 	/// @returns the size of the static part of the encoding of the given types.
 	static size_t headSize(TypePointers const& _targetTypes);
@@ -274,9 +278,9 @@ private:
 	/// is true), for which it is two.
 	static size_t numVariablesForType(Type const& _type, EncodingOptions const& _options);
 
-	/// @returns code that stores @param _message for revert reason
+	/// @returns the name of a function that uses @param _message for revert reason
 	/// if m_revertStrings is debug.
-	std::string revertReasonIfDebug(std::string const& _message = "");
+	std::string revertReasonIfDebugFunction(std::string const& _message = "");
 
 	langutil::EVMVersion m_evmVersion;
 	RevertStrings const m_revertStrings;

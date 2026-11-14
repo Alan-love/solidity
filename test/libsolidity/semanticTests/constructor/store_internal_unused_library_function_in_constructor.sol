@@ -16,8 +16,6 @@ contract C {
         return x();
     }
 }
-
 // ====
-// compileViaYul: also
 // ----
 // t() -> 7

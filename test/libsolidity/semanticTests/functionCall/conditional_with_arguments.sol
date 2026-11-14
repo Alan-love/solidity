@@ -6,8 +6,5 @@ contract C {
         return (false ? g : h)(2, 1);
     }
 }
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // f() -> 1

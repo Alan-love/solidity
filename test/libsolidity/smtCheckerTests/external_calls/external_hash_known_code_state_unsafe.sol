@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract State {
 	uint x;
 	function f() public returns (uint) {
@@ -37,6 +35,10 @@ contract C {
 		assert(owner == address(0) || y != z);
 	}
 }
+// ====
+// SMTEngine: all
+// SMTIgnoreCex: yes
 // ----
-// Warning 6328: (435-461): CHC: Assertion violation happens here.\nCounterexample:\nowner = 1, y = 0, z = 0, s = 0\n\n\n\nTransaction trace:\nconstructor()\nState: owner = 0, y = 0, z = 0, s = 0\nf()
-// Warning 6328: (594-631): CHC: Assertion violation happens here.\nCounterexample:\nowner = 1, y = 0, z = 0, s = 0\n\n\n\nTransaction trace:\nconstructor()\nState: owner = 1, y = 0, z = 0, s = 0\ninv()
+// Warning 6328: (402-428): CHC: Assertion violation happens here.\nCounterexample:\nowner = 0x0, y = 0, z = 0, s = 0\nprevOwner = 0x01\n\nTransaction trace:\nC.constructor(){ msg.sender: 0x01 }\nState: owner = 0x01, y = 0, z = 0, s = 0\nC.f()\n    s.f() -- untrusted external call, synthesized as:\n        C.setOwner(0x0) -- reentrant call\n    s.f() -- untrusted external call
+// Warning 6328: (561-598): CHC: Assertion violation happens here.\nCounterexample:\nowner = 0x01, y = 0, z = 0, s = 0\n\nTransaction trace:\nC.constructor(){ msg.sender: 0x01 }\nState: owner = 0x01, y = 0, z = 0, s = 0\nC.inv()
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

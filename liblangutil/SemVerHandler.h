@@ -24,6 +24,8 @@
 #pragma once
 
 #include <liblangutil/Token.h>
+#include <libsolutil/Assertions.h>
+#include <liblangutil/Exceptions.h>
 
 #include <string>
 #include <utility>
@@ -32,8 +34,9 @@
 namespace solidity::langutil
 {
 
-class SemVerError: util::Exception
+struct SemVerError: public util::Exception
 {
+
 };
 
 #undef major
@@ -83,9 +86,9 @@ struct SemVerMatchExpression
 class SemVerMatchExpressionParser
 {
 public:
-	SemVerMatchExpressionParser(std::vector<Token>  _tokens, std::vector<std::string>  _literals):
-		m_tokens(std::move(_tokens)), m_literals(std::move(_literals))
-	{}
+	SemVerMatchExpressionParser(std::vector<Token> _tokens, std::vector<std::string> _literals);
+
+	/// Returns an expression if it was parsable, or throws a SemVerError otherwise.
 	SemVerMatchExpression parse();
 
 private:

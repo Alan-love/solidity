@@ -18,30 +18,64 @@
 #
 # (c) 2019 solidity contributors.
 #------------------------------------------------------------------------------
+
+set -e
+
+export NODE_OPTIONS="--max-old-space-size=4096"
+
 source scripts/common.sh
-source test/externalTests/common.sh
+source scripts/externalTests/common.sh
 
-verify_input "$1"
-SOLJSON="$1"
+REPO_ROOT=$(realpath "$(dirname "$0")/../..")
 
-function install_fn { yarn; git submodule update --init; }
-function compile_fn { yarn run provision:token:contracts; }
-function test_fn { yarn run test:contracts; }
+verify_input "$@"
+BINARY_TYPE="$1"
+BINARY_PATH="$(realpath "$2")"
+SELECTED_PRESETS="$3"
+
+function compile_fn { npx hardhat compile; }
+function test_fn { pnpm run test:contracts; }
 
 function colony_test
 {
-    OPTIMIZER_LEVEL=3
-    CONFIG="truffle.js"
+    local repo="https://github.com/JoinColony/colonyNetwork.git"
+    local ref="08bca31eeb5c695aa0c5868cc905e7f238163c84" # develop as of 2026-11-04
+    local config_file="hardhat.config.js"
 
-    truffle_setup "$SOLJSON" https://github.com/solidity-external-tests/colonyNetwork.git develop_070
-    run_install "$SOLJSON" install_fn
+    local compile_only_presets=()
+    local settings_presets=(
+        "${compile_only_presets[@]}"
+        legacy-no-optimize
+        legacy-optimize-evm-only
+        legacy-optimize-evm+yul
+        #ir-no-optimize          # Compilation fails with "YulException: Variable var_dominantSigSeen is 3 too deep in the stack". No memoryguard was present.
+        #ir-optimize-evm-only    # Compilation fails with "YulException: Variable var_dominantSigSeen is 3 too deep in the stack". No memoryguard was present.
+        ir-optimize-evm+yul
+    )
 
-    cd lib
-    rm -Rf dappsys
-    git clone https://github.com/solidity-external-tests/dappsys-monolithic.git -b master_070 dappsys
-    cd ..
+    [[ $SELECTED_PRESETS != "" ]] || SELECTED_PRESETS=$(circleci_select_steps_multiarg "${settings_presets[@]}")
+    print_presets_or_exit "$SELECTED_PRESETS"
 
-    truffle_run_test "$SOLJSON" compile_fn test_fn
+    setup_solc "$DIR" "$BINARY_TYPE" "$BINARY_PATH"
+    download_project "$repo" "$ref" "$DIR"
+
+    neutralize_package_json_hooks
+    force_hardhat_compiler_binary "$config_file" "$BINARY_TYPE" "$BINARY_PATH"
+    force_hardhat_compiler_settings "$config_file" "$(first_word "$SELECTED_PRESETS")"
+    sudo npm install -g pnpm@8.14.1
+    pnpm add -w hardhat@2.27.1 hardhat-gas-reporter
+    git submodule update --init
+
+    # lib/createx ships a committed Hardhat build-info (solc 0.8.23), which trips the compiler version check.
+    rm -r lib/createx/artifacts/
+
+    replace_version_pragmas
+    remove_experimental_abi_encoder_v2_pragmas
+
+    for preset in $SELECTED_PRESETS; do
+        hardhat_run_test "$config_file" "$preset" "${compile_only_presets[*]}" compile_fn test_fn
+        store_benchmark_report hardhat colony "$repo" "$preset"
+    done
 }
 
 external_test ColonyNetworks colony_test

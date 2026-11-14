@@ -1,8 +1,8 @@
 ******************
-Using the compiler
+Using the Compiler
 ******************
 
-.. index:: ! commandline compiler, compiler;commandline, ! solc, ! linker
+.. index:: ! commandline compiler, compiler;commandline, ! solc
 
 .. _commandline-compiler:
 
@@ -12,14 +12,14 @@ Using the Commandline Compiler
 .. note::
     This section does not apply to :ref:`solcjs <solcjs>`, not even if it is used in commandline mode.
 
-Basic usage
+Basic Usage
 -----------
 
-One of the build targets of the Solidity repository is ``solc``, the solidity commandline compiler.
+One of the build targets of the Solidity repository is ``solc``, the Solidity commandline compiler.
 Using ``solc --help`` provides you with an explanation of all options. The compiler can produce various outputs, ranging from simple binaries and assembly over an abstract syntax tree (parse tree) to estimations of gas usage.
-If you only want to compile a single file, you run it as ``solc --bin sourceFile.sol`` and it will print the binary. If you want to get some of the more advanced output variants of ``solc``, it is probably better to tell it to output everything to separate files using ``solc -o outputDirectory --bin --ast-json --asm sourceFile.sol``.
+If you only want to compile a single file, you run it as ``solc --bin sourceFile.sol`` and it will print the binary. If you want to get some of the more advanced output variants of ``solc``, it is probably better to tell it to output everything to separate files using ``solc -o outputDirectory --bin --ast-compact-json --asm sourceFile.sol``.
 
-Optimizer options
+Optimizer Options
 -----------------
 
 Before you deploy your contract, activate the optimizer when compiling using ``solc --optimize --bin sourceFile.sol``.
@@ -30,51 +30,60 @@ set it to ``--optimize-runs=1``. If you expect many transactions and do not care
 output size, set ``--optimize-runs`` to a high number.
 This parameter has effects on the following (this might change in the future):
 
- - the size of the binary search in the function dispatch routine
- - the way constants like large numbers or strings are stored
+- the size of the binary search in the function dispatch routine
+- the way constants like large numbers or strings are stored
 
-Path remapping
---------------
+.. index:: allowed paths, --allow-paths, base path, --base-path, include paths, --include-path
+
+Base Path and Import Remapping
+------------------------------
 
 The commandline compiler will automatically read imported files from the filesystem, but
-it is also possible to provide path redirects using ``prefix=path`` in the following way:
+it is also possible to provide :ref:`path redirects <import-remapping>` using ``prefix=path`` in the following way:
 
-::
+.. code-block:: bash
 
     solc github.com/ethereum/dapp-bin/=/usr/local/lib/dapp-bin/ file.sol
 
 This essentially instructs the compiler to search for anything starting with
 ``github.com/ethereum/dapp-bin/`` under ``/usr/local/lib/dapp-bin``.
-``solc`` will not read files from the filesystem that lie outside of
-the remapping targets and outside of the directories where explicitly specified source
-files reside, so things like ``import "/etc/passwd";`` only work if you add ``/=/`` as a remapping.
 
-An empty remapping prefix is not allowed.
+When accessing the filesystem to search for imports, :ref:`paths that do not start with ./
+or ../ <direct-imports>` are treated as relative to the directories specified using
+``--base-path`` and ``--include-path`` options (or the current working directory if base path is not specified).
+Furthermore, the part of the path added via these options will not appear in the contract metadata.
 
-If there are multiple matches due to remappings, the one with the longest common prefix is selected.
-
-When accessing the filesystem to search for imports, all paths are treated as if they were fully qualified paths.
-This behaviour can be customized by adding the command line option ``--base-path`` with a path to be prepended
-before each filesystem access for imports is performed. Furthermore, the part added via ``--base-path``
-will not appear in the contract metadata.
-
-For security reasons the compiler has restrictions what directories it can access. Paths (and their subdirectories) of source files specified on the commandline and paths defined by remappings are allowed for import statements, but everything else is rejected. Additional paths (and their subdirectories) can be allowed via the ``--allow-paths /sample/path,/another/sample/path`` switch.
-
+For security reasons the compiler has :ref:`restrictions on what directories it can access <allowed-paths>`.
+Directories of source files specified on the command-line and target paths of
+remappings are automatically allowed to be accessed by the file reader, but everything
+else is rejected by default.
+Additional paths (and their subdirectories) can be allowed via the
+``--allow-paths /sample/path,/another/sample/path`` switch.
 Everything inside the path specified via ``--base-path`` is always allowed.
 
+The above is only a simplification of how the compiler handles import paths.
+For a detailed explanation with examples and discussion of corner cases please refer to the section on
+:ref:`path resolution <path-resolution>`.
+
+.. index:: ! linker, ! --link, ! --libraries
 .. _library-linking:
 
-Library linking
+Library Linking
 ---------------
 
-If your contracts use :ref:`libraries <libraries>`, you will notice that the bytecode contains substrings of the form ``__$53aea86b7d70b31448b230b20ae141a537$__``. These are placeholders for the actual library addresses.
+If your contracts use :ref:`libraries <libraries>`, you will notice that the bytecode contains substrings of the form ``__$53aea86b7d70b31448b230b20ae141a537$__`` `(format was different <v0.5.0) <https://docs.soliditylang.org/en/v0.4.26/contracts.html#libraries>`_. These are placeholders for the actual library addresses.
 The placeholder is a 34 character prefix of the hex encoding of the keccak256 hash of the fully qualified library name.
 The bytecode file will also contain lines of the form ``// <placeholder> -> <fq library name>`` at the end to help
 identify which libraries the placeholders represent. Note that the fully qualified library name
 is the path of its source file and the library name separated by ``:``.
 You can use ``solc`` as a linker meaning that it will insert the library addresses for you at those points:
 
-Either add ``--libraries "file.sol:Math:0x1234567890123456789012345678901234567890 file.sol:Heap:0xabCD567890123456789012345678901234567890"`` to your command to provide an address for each library (use commas or spaces as separators) or store the string in a file (one library per line) and run ``solc`` using ``--libraries fileName``.
+Either add ``--libraries "file.sol:Math=0x1234567890123456789012345678901234567890 file.sol:Heap=0xabCD567890123456789012345678901234567890"`` to your command to provide an address for each library (use commas or spaces as separators) or store the string in a file (one library per line) and run ``solc`` using ``--libraries fileName``.
+
+.. note::
+    Starting Solidity 0.8.1 accepts ``=`` as separator between library and address, and ``:`` as a separator is deprecated. It will be removed in the future. Currently ``--libraries "file.sol:Math:0x1234567890123456789012345678901234567890 file.sol:Heap:0xabCD567890123456789012345678901234567890"`` will work too.
+
+.. index:: --standard-json, --base-path
 
 If ``solc`` is called with the option ``--standard-json``, it will expect a JSON input (as explained below) on the standard input, and return a JSON output on the standard output. This is the recommended interface for more complex and especially automated uses. The process will always terminate in a "success" state and report any errors via the JSON output.
 The option ``--base-path`` is also processed in standard-json mode.
@@ -101,19 +110,19 @@ If ``solc`` is called with the option ``--link``, all input files are interprete
 .. _evm-version:
 .. index:: ! EVM version, compile target
 
-Setting the EVM version to target
+Setting the EVM Version to Target
 *********************************
 
 When you compile your contract code you can specify the Ethereum virtual machine
-version to compile for to avoid particular features or behaviours.
+version to compile for to avoid particular features or behaviors.
 
 .. warning::
 
    Compiling for the wrong EVM version can result in wrong, strange and failing
-   behaviour. Please ensure, especially if running a private chain, that you
+   behavior. Please ensure, especially if running a private chain, that you
    use matching EVM versions.
 
-On the command line, you can select the EVM version as follows:
+On the command-line, you can select the EVM version as follows:
 
 .. code-block:: shell
 
@@ -122,44 +131,65 @@ On the command line, you can select the EVM version as follows:
 In the :ref:`standard JSON interface <compiler-api>`, use the ``"evmVersion"``
 key in the ``"settings"`` field:
 
-.. code-block:: none
+.. code-block:: javascript
 
-  {
-    "sources": { ... },
-    "settings": {
-      "optimizer": { ... },
-      "evmVersion": "<VERSION>"
+    {
+      "sources": {/* ... */},
+      "settings": {
+        "optimizer": {/* ... */},
+        "evmVersion": "<VERSION>"
+      }
     }
-  }
 
-Target options
---------------
+EVM Versions
+------------
 
 Below is a list of target EVM versions and the compiler-relevant changes introduced
 at each version. Backward compatibility is not guaranteed between each version.
+See also the `Timeline of all Ethereum forks <https://ethereum.org/ethereum-forks/>`__ for more details.
+Note that the compiler introduces a new option only for forks that actually change the EVM.
 
-- ``homestead``
+- ``homestead`` (*support deprecated*)
    - (oldest version)
-- ``tangerineWhistle``
+- ``tangerineWhistle`` (*support deprecated*)
    - Gas cost for access to other accounts increased, relevant for gas estimation and the optimizer.
    - All gas sent by default for external calls, previously a certain amount had to be retained.
-- ``spuriousDragon``
+- ``spuriousDragon`` (*support deprecated*)
    - Gas cost for the ``exp`` opcode increased, relevant for gas estimation and the optimizer.
-- ``byzantium``
+- ``byzantium`` (*support deprecated*)
    - Opcodes ``returndatacopy``, ``returndatasize`` and ``staticcall`` are available in assembly.
    - The ``staticcall`` opcode is used when calling non-library view or pure functions, which prevents the functions from modifying state at the EVM level, i.e., even applies when you use invalid type conversions.
    - It is possible to access dynamic data returned from function calls.
    - ``revert`` opcode introduced, which means that ``revert()`` will not waste gas.
-- ``constantinople``
-   - Opcodes ``create2`, ``extcodehash``, ``shl``, ``shr`` and ``sar`` are available in assembly.
+- ``constantinople`` (*support deprecated*)
+   - Opcodes ``create2``, ``extcodehash``, ``shl``, ``shr`` and ``sar`` are available in assembly.
    - Shifting operators use shifting opcodes and thus need less gas.
-- ``petersburg``
+- ``petersburg`` (*support deprecated*)
    - The compiler behaves the same way as with constantinople.
-- ``istanbul`` (**default**)
+- ``istanbul`` (*support deprecated*)
    - Opcodes ``chainid`` and ``selfbalance`` are available in assembly.
-- ``berlin`` (**experimental**)
+- ``berlin`` (*support deprecated*)
+   - Gas costs for ``SLOAD``, ``*CALL``, ``BALANCE``, ``EXT*`` and ``SELFDESTRUCT`` increased. The
+     compiler assumes cold gas costs for such operations. This is relevant for gas estimation and
+     the optimizer.
+- ``london``
+   - The block's base fee (`EIP-3198 <https://eips.ethereum.org/EIPS/eip-3198>`_ and `EIP-1559 <https://eips.ethereum.org/EIPS/eip-1559>`_) can be accessed via the global ``block.basefee`` or ``basefee()`` in inline assembly.
+- ``paris``
+   - Introduces ``prevrandao()`` and ``block.prevrandao``, and changes the semantics of the now deprecated ``block.difficulty``, disallowing ``difficulty()`` in inline assembly (see `EIP-4399 <https://eips.ethereum.org/EIPS/eip-4399>`_).
+- ``shanghai``
+   - Smaller code size and gas savings due to the introduction of ``push0`` (see `EIP-3855 <https://eips.ethereum.org/EIPS/eip-3855>`_).
+- ``cancun``
+   - The block's blob base fee (`EIP-7516 <https://eips.ethereum.org/EIPS/eip-7516>`_ and `EIP-4844 <https://eips.ethereum.org/EIPS/eip-4844>`_) can be accessed via the global ``block.blobbasefee`` or ``blobbasefee()`` in inline assembly.
+   - Introduces ``blobhash()`` in inline assembly and a corresponding global function to retrieve versioned hashes of blobs associated with the transaction (see `EIP-4844 <https://eips.ethereum.org/EIPS/eip-4844>`_).
+   - Opcode ``mcopy`` is available in assembly (see `EIP-5656 <https://eips.ethereum.org/EIPS/eip-5656>`_).
+   - Opcodes ``tstore`` and ``tload`` are available in assembly (see `EIP-1153 <https://eips.ethereum.org/EIPS/eip-1153>`_).
+- ``prague``
+- ``osaka`` (**default**)
+   - ``clz`` builtin function is available in inline assembly. (`EIP-7939 <https://eips.ethereum.org/EIPS/eip-7939>`_)
+- ``amsterdam`` (**experimental**)
+   - The beacon chain slot number (`EIP-7843 <https://eips.ethereum.org/EIPS/eip-7843>`_) can be accessed via the global ``block.slotnum`` or ``slotnum()`` in inline assembly.
 
-
+.. index:: ! standard JSON, ! --standard-json
 .. _compiler-api:
 
 Compiler Input and Output JSON Description
@@ -182,10 +212,10 @@ Comments are of course not permitted and used here only for explanatory purposes
 Input Description
 -----------------
 
-.. code-block:: none
+.. code-block:: javascript
 
     {
-      // Required: Source code language. Currently supported are "Solidity" and "Yul".
+      // Required: Source code language. Currently supported are "Solidity", "Yul", "SolidityAST" (experimental), "EVMAssembly" (experimental).
       "language": "Solidity",
       // Required
       "sources":
@@ -209,16 +239,43 @@ Input Description
             "bzzr://56ab...",
             "ipfs://Qma...",
             "/tmp/path/to/file.sol"
-            // If files are used, their directories should be added to the command line via
+            // If files are used, their directories should be added to the command-line via
             // `--allow-paths <path>`.
           ]
         },
-        "destructible":
+        "settable":
         {
           // Optional: keccak256 hash of the source file
           "keccak256": "0x234...",
           // Required (unless "urls" is used): literal contents of the source file
-          "content": "contract destructible is owned { function shutdown() { if (msg.sender == owner) selfdestruct(owner); } }"
+          "content": "contract settable is owned { uint256 private x = 0; function set(uint256 _x) public { if (msg.sender == owner) x = _x; } }"
+        },
+        "myFile.sol_json.ast":
+        {
+          // If language is set to "SolidityAST", an AST needs to be supplied under the "ast" key
+          // and there can be only one source file present.
+          // The format is the same as used by the `ast` output.
+          // Note that importing ASTs is experimental and in particular that:
+          // - importing invalid ASTs can produce undefined results and
+          // - no proper error reporting is available on invalid ASTs.
+          // Furthermore, note that the AST import only consumes the fields of the AST as
+          // produced by the compiler in "stopAfter": "parsing" mode and then re-performs
+          // analysis, so any analysis-based annotations of the AST are ignored upon import.
+          "ast": { ... }
+        },
+        "myFile_evm.json":
+        {
+          // If language is set to "EVMAssembly", an EVM Assembly JSON object needs to be supplied
+          // under the "assemblyJson" key and there can be only one source file present.
+          // The format is the same as used by the `evm.legacyAssembly` output or `--asm-json`
+          // output on the command line.
+          // Note that importing EVM assembly is experimental.
+          "assemblyJson":
+          {
+            ".code": [ ... ],
+            ".data": { ... }, // optional
+            "sourceList": [ ... ] // optional (if no `source` node was defined in any `.code` object)
+          }
         }
       },
       // Optional
@@ -226,71 +283,131 @@ Input Description
       {
         // Optional: Stop compilation after the given stage. Currently only "parsing" is valid here
         "stopAfter": "parsing",
-        // Optional: Sorted list of remappings
+        // Optional: List of remappings
         "remappings": [ ":g=/dir" ],
+        // Optional: Experimental mode toggle (Default: false)
+        // Makes it possible to use experimental features (but does not enable any such feature by itself).
+        // The use of this mode is recorded in contract metadata.
+        "experimental": true,
         // Optional: Optimizer settings
         "optimizer": {
-          // disabled by default
+          // Turn on the optimizer. Optional. Default: false.
+          // NOTE: The state of the optimizer is fully determined by the 'details' dict and this setting
+          // only affects its defaults - when enabled, all components default to being enabled.
+          // The opposite is not true - there are several components that always default to being
+          // enabled an can only be explicitly disabled via 'details'.
+          // WARNING: Before version 0.8.6 omitting this setting was not equivalent to setting
+          // it to false and would result in all components being disabled instead.
+          // WARNING: Enabling optimizations for EVMAssembly input is allowed but not necessary under normal
+          // circumstances. It forces the opcode-based optimizer to run again and can produce bytecode that
+          // is not reproducible from metadata.
           "enabled": true,
-          // Optimize for how many times you intend to run the code.
+          // Optimize for how many times you intend to run the code. Optional. Default: 200.
           // Lower values will optimize more for initial deployment cost, higher
           // values will optimize more for high-frequency usage.
           "runs": 200,
-          // Switch optimizer components on or off in detail.
-          // The "enabled" switch above provides two defaults which can be
-          // tweaked here. If "details" is given, "enabled" can be omitted.
+          // State of all optimizer components. Optional.
+          // Default values are determined by whether the optimizer is enabled or not.
+          // Note that the 'enabled' setting only affects the defaults here and has no effect when
+          // all values are provided explicitly.
           "details": {
-            // The peephole optimizer is always on if no details are given,
-            // use details to switch it off.
+            // Peephole optimizer (opcode-based). Optional. Default: true.
+            // Default for EVMAssembly input: false when optimization is not enabled.
+            // NOTE: Always runs (even with optimization disabled) except for EVMAssembly input or when explicitly turned off here.
             "peephole": true,
-            // The unused jumpdest remover is always on if no details are given,
-            // use details to switch it off.
+            // Inliner (opcode-based). Optional. Default: true when optimization is enabled.
+            "inliner": false,
+            // Unused JUMPDEST remover (opcode-based). Optional. Default: true.
+            // Default for EVMAssembly input: false when optimization is not enabled.
+            // NOTE: Always runs (even with optimization disabled) except for EVMAssembly input or when explicitly turned off here.
             "jumpdestRemover": true,
-            // Sometimes re-orders literals in commutative operations.
+            // Literal reordering (codegen-based). Optional. Default: true when optimization is enabled.
+            // Moves literals to the right of commutative binary operators during code generation, helping exploit associativity.
             "orderLiterals": false,
-            // Removes duplicate code blocks
+            // Block deduplicator (opcode-based). Optional. Default: true when optimization is enabled.
+            // Unifies assembly code blocks that share content.
             "deduplicate": false,
-            // Common subexpression elimination, this is the most complicated step but
-            // can also provide the largest gain.
+            // Common subexpression elimination (opcode-based). Optional. Default: true when optimization is enabled.
+            // This is the most complicated step but can also provide the largest gain.
             "cse": false,
-            // Optimize representation of literal numbers and strings in code.
+            // Constant optimizer (opcode-based). Optional. Default: true when optimization is enabled.
+            // Tries to find better representations of literal numbers and strings, that satisfy the
+            // size/cost trade-off determined by the 'runs' setting.
             "constantOptimizer": false,
-            // The new Yul optimizer. Mostly operates on the code of ABI coder v2
-            // and inline assembly.
-            // It is activated together with the global optimizer setting
-            // and can be deactivated here.
-            // Before Solidity 0.6.0 it had to be activated through this switch.
+            // Unchecked loop increment (codegen-based). Optional. Default: true.
+            // Use unchecked arithmetic when incrementing the counter of 'for' loops under certain circumstances.
+            // NOTE: Always runs (even with optimization disabled) unless explicitly turned off here.
+            "simpleCounterForLoopUncheckedIncrement": true,
+            // Yul optimizer. Optional. Default: true when optimization is enabled.
+            // Used to optimize the IR produced by the Yul IR-based pipeline as well as inline assembly
+            // and utility Yul code generated by the compiler.
+            // NOTE: Before Solidity 0.6.0 the default was false.
             "yul": false,
-            // Tuning options for the Yul optimizer.
+            // Tuning options for the Yul optimizer. Optional.
             "yulDetails": {
               // Improve allocation of stack slots for variables, can free up stack slots early.
-              // Activated by default if the Yul optimizer is activated.
+              // Optional. Default: true if Yul optimizer is enabled.
               "stackAllocation": true,
-              // Select optimization steps to be applied.
-              // Optional, the optimizer will use the default sequence if omitted.
-              "optimizerSteps": "dhfoDgvulfnTUtnIf..."
+              // Optimization step sequence.
+              // The general form of the value is "<main sequence>:<cleanup sequence>".
+              // The setting is optional and when omitted, default values are used for both sequences.
+              // If the value does not contain the ':' delimiter, it is interpreted as the main
+              // sequence and the default is used for the cleanup sequence.
+              // To make one of the sequences empty, the delimiter must be present at the first or last position.
+              // In particular if the whole value consists only of the delimiter, both sequences are empty.
+              // Note that there are several hard-coded steps that always run, even when both sequences are empty.
+              // For more information see "The Optimizer > Selecting Optimizations".
+              "optimizerSteps": "dfDvulfnTUtnIf..."
             }
           }
         },
-        // Version of the EVM to compile for.
+        // Version of the EVM to compile for (optional).
         // Affects type checking and code generation. Can be homestead,
-        // tangerineWhistle, spuriousDragon, byzantium, constantinople, petersburg, istanbul or berlin
-        "evmVersion": "byzantium",
+        // tangerineWhistle, spuriousDragon, byzantium, constantinople,
+        // petersburg, istanbul, berlin, london, paris, shanghai, cancun,
+        // prague, osaka (default), amsterdam (experimental), or @future (experimental).
+        "evmVersion": "osaka",
         // Optional: Change compilation pipeline to go through the Yul intermediate representation.
-        // This is a highly EXPERIMENTAL feature, not to be used for production. This is false by default.
+        // This is false by default.
         "viaIR": true,
+        // Optional: Turn on SSA CFG-based code generation via the IR (experimental).
+        // Implies viaIR: true. This is false by default.
+        "viaSSACFG": false,
         // Optional: Debugging settings
         "debug": {
           // How to treat revert (and require) reason strings. Settings are
           // "default", "strip", "debug" and "verboseDebug".
           // "default" does not inject compiler-generated revert strings and keeps user-supplied ones.
-          // "strip" removes all revert strings (if possible, i.e. if literals are used) keeping side-effects
+          // "strip" removes all revert strings (if possible, i.e. if literals are used) keeping side-effects.
+          // NOTE: "strip" does not remove custom errors.
           // "debug" injects strings for compiler-generated internal reverts, implemented for ABI encoders V1 and V2 for now.
           // "verboseDebug" even appends further information to user-supplied revert strings (not yet implemented)
-          "revertStrings": "default"
-        }
+          "revertStrings": "default",
+          // Optional: How much extra debug information to include in comments in the produced EVM
+          // assembly and Yul code. Available components are:
+          // - `location`: Annotations of the form `@src <index>:<start>:<end>` indicating the
+          //    location of the corresponding element in the original Solidity file, where:
+          //     - `<index>` is the file index matching the `@use-src` annotation,
+          //     - `<start>` is the index of the first byte at that location,
+          //     - `<end>` is the index of the first byte after that location.
+          // - `snippet`: A single-line code snippet from the location indicated by `@src`.
+          //     The snippet is quoted and follows the corresponding `@src` annotation.
+          //     Depends on `location`. Selecting `snippet` without it is an error.
+          // - `ast-id`: Annotations of the form `@ast-id <id>` over elements that can be mapped back to a definition in the original Solidity file.
+          //   `<id>` is a node ID in the Solidity AST ('ast' output).
+          // - `ethdebug`: Ethdebug annotations (experimental). Depends on `ast-id`. Selecting
+          //   `ethdebug` without `ast-id` is an error. Requesting an ethdebug output does not
+          //   change this selection. Without `ethdebug` in it the `evm.bytecode.ethdebug` and
+          //   `evm.deployedBytecode.ethdebug` outputs carry none of the semantic debug info
+          //   this component adds.
+          // - `*`: Wildcard value that can be used to request all non-experimental components.
+          "debugInfo": ["location", "snippet", "ast-id", "ethdebug"]
+        },
         // Metadata settings (optional)
         "metadata": {
+          // The CBOR metadata is appended at the end of the bytecode by default.
+          // Setting this to false omits the metadata from the runtime and deploy time code.
+          "appendCBOR": true,
           // Use only literal content and not URLs (false by default)
           "useLiteralContent": true,
           // Use the given hash method for the metadata hash that is appended to the bytecode.
@@ -302,14 +419,14 @@ Input Description
         // Addresses of the libraries. If not all libraries are given here,
         // it can result in unlinked objects whose output data is different.
         "libraries": {
-          // The top level key is the the name of the source file where the library is used.
+          // The top level key is the name of the source file where the library is used.
           // If remappings are used, this source file should match the global path
           // after remappings were applied.
           // If this key is an empty string, that refers to a global level.
           "myFile.sol": {
             "MyLib": "0x123123..."
           }
-        }
+        },
         // The following can be used to select desired outputs based
         // on file and contract names.
         // If this field is omitted, then the compiler loads and does type checking,
@@ -319,7 +436,8 @@ Input Description
         // but to the whole source file like the AST.
         // A star as contract name refers to all contracts in the file.
         // Similarly, a star as a file name matches all files.
-        // To select all outputs the compiler can possibly generate, use
+        // To select all outputs the compiler can possibly generate, with the exclusion of
+        // Yul intermediate representation outputs, use
         // "outputSelection: { "*": { "*": [ "*" ], "": [ "*" ] } }"
         // but note that this might slow down the compilation process needlessly.
         //
@@ -327,7 +445,6 @@ Input Description
         //
         // File level (needs empty string as contract name):
         //   ast - AST of all source files
-        //   legacyAST - legacy AST of all source files
         //
         // Contract level (needs the contract name or "*"):
         //   abi - ABI
@@ -335,10 +452,16 @@ Input Description
         //   userdoc - User documentation (natspec)
         //   metadata - Metadata
         //   ir - Yul intermediate representation of the code before optimization
+        //   irAst - AST of Yul intermediate representation of the code before optimization (experimental)
         //   irOptimized - Intermediate representation after optimization
-        //   storageLayout - Slots, offsets and types of the contract's state variables.
+        //   irOptimizedAst - AST of intermediate representation after optimization (experimental)
+        //   storageLayout - Slots, offsets and types of the contract's state variables in storage
+        //   transientStorageLayout - Slots, offsets and types of the contract's state variables in transient storage
         //   evm.assembly - New assembly format
         //   evm.legacyAssembly - Old-style assembly format in JSON
+        //   evm.bytecode.ethdebug - Debug information in ethdebug format (ethdebug/format/program schema for creation bytecode), stamped with the schema and the version of the ethdebug/format specification it follows. Can only be requested when compiling via IR. Carries semantic debug info only when the `ethdebug` component is present in `settings.debug.debugInfo`. (experimental)
+        //   evm.deployedBytecode.ethdebug - Debug information in ethdebug format (ethdebug/format/program schema for deployed bytecode), stamped with the schema and the version of the ethdebug/format specification it follows. Can only be requested when compiling via IR. Carries semantic debug info only when the `ethdebug` component is present in `settings.debug.debugInfo`. (experimental)
+        //   evm.bytecode.functionDebugData - Debugging information at function level
         //   evm.bytecode.object - Bytecode object
         //   evm.bytecode.opcodes - Opcodes list
         //   evm.bytecode.sourceMap - Source mapping (useful for debugging)
@@ -348,10 +471,12 @@ Input Description
         //   evm.deployedBytecode.immutableReferences - Map from AST ids to bytecode ranges that reference immutables
         //   evm.methodIdentifiers - The list of function hashes
         //   evm.gasEstimates - Function gas estimates
-        //   ewasm.wast - Ewasm in WebAssembly S-expressions format
-        //   ewasm.wasm - Ewasm in WebAssembly binary format
         //
-        // Note that using a using `evm`, `evm.bytecode`, `ewasm`, etc. will select every
+        // Global level (needs "*" as file name and "*" as contract name):
+        //   ethdebug.resources - Global ethdebug type and pointer tables (ethdebug/format/info/resources schema) (experimental)
+        //   ethdebug.compilation - Compiler information and source list (ethdebug/format/materials/compilation schema) (experimental)
+        //
+        // Note that using `evm`, `evm.bytecode`, etc. will select every
         // target part of that output. Additionally, `*` can be used as a wildcard to request everything.
         //
         "outputSelection": {
@@ -369,10 +494,45 @@ Input Description
             "MyContract": [ "abi", "evm.bytecode.opcodes" ]
           }
         },
+        // The modelChecker object is experimental and subject to changes.
         "modelChecker":
         {
+          // Chose which contracts should be analyzed as the deployed one.
+          "contracts":
+          {
+            "source1.sol": ["contract1"],
+            "source2.sol": ["contract2", "contract3"]
+          },
+          // Choose how division and modulo operations should be encoded.
+          // When using `false` they are replaced by multiplication with slack
+          // variables. This is the default.
+          // Using `true` here is recommended if you are using the CHC engine
+          // and not using Spacer as the Horn solver (using Eldarica, for example).
+          // See the Formal Verification section for a more detailed explanation of this option.
+          "divModNoSlacks": false,
           // Choose which model checker engine to use: all (default), bmc, chc, none.
           "engine": "chc",
+          // Choose whether external calls should be considered trusted in case the
+          // code of the called function is available at compile-time.
+          // For details see the SMTChecker section.
+          "extCalls": "trusted",
+          // Choose which types of invariants should be reported to the user: contract, reentrancy.
+          "invariants": ["contract", "reentrancy"],
+          // Choose whether to output all proved targets. The default is `false`.
+          "showProvedSafe": true,
+          // Choose whether to output all unproved targets. The default is `false`.
+          "showUnproved": true,
+          // Choose whether to output all unsupported language features. The default is `false`.
+          "showUnsupported": true,
+          // Choose which solvers should be used, if available.
+          // See the Formal Verification section for the solvers description.
+          "solvers": ["cvc5", "smtlib2", "z3"],
+          // Choose which targets should be checked: constantCondition,
+          // underflow, overflow, divByZero, balance, assert, popEmptyArray, outOfBounds.
+          // If the option is not given all targets are checked by default,
+          // except underflow/overflow for Solidity >=0.8.7.
+          // See the Formal Verification section for the targets description.
+          "targets": ["underflow", "overflow", "assert"],
           // Timeout for each SMT query in milliseconds.
           // If this option is not given, the SMTChecker will use a deterministic
           // resource limit by default.
@@ -386,10 +546,10 @@ Input Description
 Output Description
 ------------------
 
-.. code-block:: none
+.. code-block:: javascript
 
     {
-      // Optional: not present if no errors/warnings were encountered
+      // Optional: not present if no errors/warnings/infos were encountered
       "errors": [
         {
           // Optional: Location within the source file.
@@ -397,7 +557,7 @@ Output Description
             "file": "sourceFile.sol",
             "start": 0,
             "end": 100
-          ],
+          },
           // Optional: Further locations (e.g. places of conflicting declarations)
           "secondarySourceLocations": [
             {
@@ -410,9 +570,9 @@ Output Description
           // Mandatory: Error type, such as "TypeError", "InternalCompilerError", "Exception", etc.
           // See below for complete list of types.
           "type": "TypeError",
-          // Mandatory: Component where the error originated, such as "general", "ewasm", etc.
+          // Mandatory: Component where the error originated, such as "general" etc.
           "component": "general",
-          // Mandatory ("error" or "warning")
+          // Mandatory ("error", "warning" or "info", but please note that this may be extended in the future)
           "severity": "error",
           // Optional: unique code for the cause of the error
           "errorCode": "3141",
@@ -429,9 +589,7 @@ Output Description
           // Identifier of the source (used in source maps)
           "id": 1,
           // The AST object
-          "ast": {},
-          // The legacy AST object
-          "legacyAST": {}
+          "ast": {}
         }
       },
       // This contains the contract-level outputs.
@@ -444,15 +602,23 @@ Output Description
             // See https://docs.soliditylang.org/en/develop/abi-spec.html
             "abi": [],
             // See the Metadata Output documentation (serialised JSON string)
-            "metadata": "{...}",
+            "metadata": "{/* ... */}",
             // User documentation (natspec)
             "userdoc": {},
             // Developer documentation (natspec)
             "devdoc": {},
-            // Intermediate representation (string)
+            // Intermediate representation before optimization (string)
             "ir": "",
+            // AST of intermediate representation before optimization
+            "irAst":  {/* ... */},
+            // Intermediate representation after optimization (string)
+            "irOptimized": "",
+            // AST of intermediate representation after optimization
+            "irOptimizedAst": {/* ... */},
             // See the Storage Layout documentation.
-            "storageLayout": {"storage": [...], "types": {...} },
+            "storageLayout": {"storage": [/* ... */], "types": {/* ... */} },
+            // See the Storage Layout documentation.
+            "transientStorageLayout": {"storage": [/* ... */], "types": {/* ... */} },
             // EVM-related outputs
             "evm": {
               // Assembly (string)
@@ -461,6 +627,19 @@ Output Description
               "legacyAssembly": {},
               // Bytecode and related details.
               "bytecode": {
+                // Ethdebug output (experimental)
+                "ethdebug": {/* ... */},
+                // Debugging data at the level of functions.
+                "functionDebugData": {
+                  // Now follows a set of functions including compiler-internal and
+                  // user-defined function. The set does not have to be complete.
+                  "@mint_13": { // Internal name of the function
+                    "entryPoint": 128, // Byte offset into the bytecode where the function starts (optional)
+                    "id": 13, // AST ID of the function definition or null for compiler-internal functions (optional)
+                    "parameterSlots": 2, // Number of EVM stack slots for the function parameters (optional)
+                    "returnSlots": 1 // Number of EVM stack slots for the return values (optional)
+                  }
+                },
                 // The bytecode as a hex string.
                 "object": "00fe",
                 // Opcodes list (string)
@@ -471,14 +650,14 @@ Output Description
                 // contains a single Yul file.
                 "generatedSources": [{
                   // Yul AST
-                  "ast": { ... }
+                  "ast": {/* ... */},
                   // Source file in its text form (may contain comments)
                   "contents":"{ function abi_decode(start, end) -> data { data := calldataload(start) } }",
                   // Source file ID, used for source references, same "namespace" as the Solidity source files
                   "id": 2,
                   "language": "Yul",
                   "name": "#utility.yul"
-                }]
+                }],
                 // If given, this is an unlinked object.
                 "linkReferences": {
                   "libraryFile.sol": {
@@ -492,7 +671,9 @@ Output Description
                 }
               },
               "deployedBytecode": {
-                ..., // The same layout as above.
+                // Ethdebug output (experimental)
+                "ethdebug": {/* ... */},
+                /* ..., */ // The same layout as above.
                 "immutableReferences": {
                   // There are two references to the immutable with AST ID 3, both 32 bytes long. One is
                   // at bytecode offset 42, the other at bytecode offset 80.
@@ -517,21 +698,20 @@ Output Description
                   "heavyLifting()": "infinite"
                 }
               }
-            },
-            // Ewasm related outputs
-            "ewasm": {
-              // S-expressions format
-              "wast": "",
-              // Binary format (hex string)
-              "wasm": ""
             }
           }
         }
+      },
+      // Global Ethdebug output (experimental)
+      "ethdebug": {
+        // Type and pointer tables, requested via ethdebug.resources
+        "resources": {/* ... */},
+        // Compiler information and sources, requested via ethdebug.compilation
+        "compilation": {/* ... */}
       }
     }
 
-
-Error types
+Error Types
 ~~~~~~~~~~~
 
 1. ``JSONError``: JSON input doesn't conform to the required format, e.g. input is not a JSON object, the language is not supported, etc.
@@ -546,229 +726,54 @@ Error types
 10. ``Exception``: Unknown failure during compilation - this should be reported as an issue.
 11. ``CompilerError``: Invalid use of the compiler stack - this should be reported as an issue.
 12. ``FatalError``: Fatal error not processed correctly - this should be reported as an issue.
-13. ``Warning``: A warning, which didn't stop the compilation, but should be addressed if possible.
+13. ``YulException``: Error during Yul code generation - this should be reported as an issue.
+14. ``Warning``: A warning, which didn't stop the compilation, but should be addressed if possible.
+15. ``Info``: Information that the compiler thinks the user might find useful, but is not dangerous and does not necessarily need to be addressed.
 
+.. index:: ! Experimental mode, ! --experimental
+.. _experimental-mode:
 
-.. _compiler-tools:
+Experimental Mode
+*****************
 
-Compiler tools
-**************
+Some language and compiler features included in stable releases are not themselves considered stable.
+They are sparsely documented, if at all, often not adequately tested, and thus not yet intended for production use.
+In many cases it is possible to develop a big feature incrementally, with each iteration being already stable.
+Sometimes, however, it is preferable to start with a prototype and stabilize it over multiple releases, while receiving feedback from users.
+To prevent accidental use, such features can be only accessed by enabling the experimental mode.
 
-solidity-upgrade
-----------------
+There are no backwards compatibility guarantees for experimental features.
+They are subject to change in breaking ways in non-breaking releases of the compiler.
+Only major changes affecting them are recorded in the changelog.
 
-``solidity-upgrade`` can help you to semi-automatically upgrade your contracts
-to breaking language changes. While it does not and cannot implement all
-required changes for every breaking release, it still supports the ones, that
-would need plenty of repetitive manual adjustments otherwise.
+To enable the experimental mode, use the ``--experimental`` flag on the command line,
+or the analogous ``settings.experimental`` boolean setting in the Standard JSON input.
+
+Note that the use of this mode is recorded in the metadata:
+
+- ``experimental`` flag in CBOR metadata is set to ``true``,
+- ``settings.experimental`` in JSON metadata is set to ``true``,
 
 .. note::
+    Prior to version 0.8.35, most of the experimental features were usable without any extra safeguards.
+    Some were gated behind ``pragma experimental``, but this was not done consistently.
+    The information about them was also only recorded in CBOR metadata and even then not always.
+    The main goal of the experimental mode is to systematize this and make users fully aware when relying on features which are unfinished or not production-ready.
 
-    ``solidity-upgrade`` carries out a large part of the work, but your
-    contracts will most likely need further manual adjustments. We recommend
-    using a version control system for your files. This helps reviewing and
-    eventually rolling back the changes made.
+The table below details all currently available experimental features.
 
-.. warning::
-
-    ``solidity-upgrade`` is not considered to be complete or free from bugs, so
-    please use with care.
-
-How it works
-~~~~~~~~~~~~
-
-You can pass (a) Solidity source file(s) to ``solidity-upgrade [files]``. If
-these make use of ``import`` statement which refer to files outside the
-current source file's directory, you need to specify directories that
-are allowed to read and import files from, by passing
-``--allow-paths [directory]``. You can ignore missing files by passing
-``--ignore-missing``.
-
-``solidity-upgrade`` is based on ``libsolidity`` and can parse, compile and
-analyse your source files, and might find applicable source upgrades in them.
-
-Source upgrades are considered to be small textual changes to your source code.
-They are applied to an in-memory representation of the source files
-given. The corresponding source file is updated by default, but you can pass
-``--dry-run`` to simulate to whole upgrade process without writing to any file.
-
-The upgrade process itself has two phases. In the first phase source files are
-parsed, and since it is not possible to upgrade source code on that level,
-errors are collected and can be logged by passing ``--verbose``. No source
-upgrades available at this point.
-
-In the second phase, all sources are compiled and all activated upgrade analysis
-modules are run alongside compilation. By default, all available modules are
-activated. Please read the documentation on
-:ref:`available modules <upgrade-modules>` for further details.
-
-
-This can result in compilation errors that may
-be fixed by source upgrades. If no errors occur, no source upgrades are being
-reported and you're done.
-If errors occur and some upgrade module reported a source upgrade, the first
-reported one gets applied and compilation is triggered again for all given
-source files. The previous step is repeated as long as source upgrades are
-reported. If errors still occur, you can log them by passing ``--verbose``.
-If no errors occur, your contracts are up to date and can be compiled with
-the latest version of the compiler.
-
-.. _upgrade-modules:
-
-Available upgrade modules
-~~~~~~~~~~~~~~~~~~~~~~~~~
-
-+----------------------------+---------+--------------------------------------------------+
-| Module                     | Version | Description                                      |
-+============================+=========+==================================================+
-| ``constructor``            | 0.5.0   | Constructors must now be defined using the       |
-|                            |         | ``constructor`` keyword.                         |
-+----------------------------+---------+--------------------------------------------------+
-| ``visibility``             | 0.5.0   | Explicit function visibility is now mandatory,   |
-|                            |         | defaults to ``public``.                          |
-+----------------------------+---------+--------------------------------------------------+
-| ``abstract``               | 0.6.0   | The keyword ``abstract`` has to be used if a     |
-|                            |         | contract does not implement all its functions.   |
-+----------------------------+---------+--------------------------------------------------+
-| ``virtual``                | 0.6.0   | Functions without implementation outside an      |
-|                            |         | interface have to be marked ``virtual``.         |
-+----------------------------+---------+--------------------------------------------------+
-| ``override``               | 0.6.0   | When overriding a function or modifier, the new  |
-|                            |         | keyword ``override`` must be used.               |
-+----------------------------+---------+--------------------------------------------------+
-| ``dotsyntax``              | 0.7.0   | The following syntax is deprecated:              |
-|                            |         | ``f.gas(...)()``, ``f.value(...)()`` and         |
-|                            |         | ``(new C).value(...)()``. Replace these calls by |
-|                            |         | ``f{gas: ..., value: ...}()`` and                |
-|                            |         | ``(new C){value: ...}()``.                       |
-+----------------------------+---------+--------------------------------------------------+
-| ``now``                    | 0.7.0   | The ``now`` keyword is deprecated. Use           |
-|                            |         | ``block.timestamp`` instead.                     |
-+----------------------------+---------+--------------------------------------------------+
-| ``constructor-visibility`` | 0.7.0   | Removes visibility of constructors.              |
-|                            |         |                                                  |
-+----------------------------+---------+--------------------------------------------------+
-
-Please read :doc:`0.5.0 release notes <050-breaking-changes>`,
-:doc:`0.6.0 release notes <060-breaking-changes>` and
-:doc:`0.7.0 release notes <070-breaking-changes>` for further details.
-
-Synopsis
-~~~~~~~~
-
-.. code-block:: none
-
-    Usage: solidity-upgrade [options] contract.sol
-
-    Allowed options:
-        --help               Show help message and exit.
-        --version            Show version and exit.
-        --allow-paths path(s)
-                             Allow a given path for imports. A list of paths can be
-                             supplied by separating them with a comma.
-        --ignore-missing     Ignore missing files.
-        --modules module(s)  Only activate a specific upgrade module. A list of
-                             modules can be supplied by separating them with a comma.
-        --dry-run            Apply changes in-memory only and don't write to input
-                             file.
-        --verbose            Print logs, errors and changes. Shortens output of
-                             upgrade patches.
-        --unsafe             Accept *unsafe* changes.
-
-
-
-Bug Reports / Feature requests
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-If you found a bug or if you have a feature request, please
-`file an issue <https://github.com/ethereum/solidity/issues/new/choose>`_ on Github.
-
-
-Example
-~~~~~~~
-
-Assume that you have the following contract in ``Source.sol``:
-
-.. code-block:: Solidity
-
-    pragma solidity >=0.6.0 <0.6.4;
-    // This will not compile after 0.7.0
-    // SPDX-License-Identifier: GPL-3.0
-    contract C {
-        // FIXME: remove constructor visibility and make the contract abstract
-        constructor() internal {}
-    }
-
-    contract D {
-        uint time;
-
-        function f() public payable {
-            // FIXME: change now to block.timestamp
-            time = now;
-        }
-    }
-
-    contract E {
-        D d;
-
-        // FIXME: remove constructor visibility
-        constructor() public {}
-
-        function g() public {
-            // FIXME: change .value(5) =>  {value: 5}
-            d.f.value(5)();
-        }
-    }
-
-
-
-Required changes
-^^^^^^^^^^^^^^^^
-
-The above contract will not compile starting from 0.7.0. To bring the contract up to date with the
-current Solidity version, the following upgrade modules have to be executed:
-``constructor-visibility``, ``now`` and ``dotsyntax``. Please read the documentation on
-:ref:`available modules <upgrade-modules>` for further details.
-
-
-Running the upgrade
-^^^^^^^^^^^^^^^^^^^
-
-It is recommended to explicitly specify the upgrade modules by using ``--modules`` argument.
-
-.. code-block:: none
-
-   $ solidity-upgrade --modules constructor-visibility,now,dotsyntax Source.sol
-
-The command above applies all changes as shown below. Please review them carefully (the pragmas will
-have to be updated manually.)
-
-.. code-block:: Solidity
-
-    pragma solidity ^0.7.0;
-    // SPDX-License-Identifier: GPL-3.0
-    abstract contract C {
-        // FIXME: remove constructor visibility and make the contract abstract
-        constructor() {}
-    }
-
-    contract D {
-        uint time;
-
-        function f() public payable {
-            // FIXME: change now to block.timestamp
-            time = block.timestamp;
-        }
-    }
-
-    contract E {
-        D d;
-
-        // FIXME: remove constructor visibility
-        constructor() {}
-
-        function g() public {
-            // FIXME: change .value(5) =>  {value: 5}
-            d.f{value: 5}();
-        }
-    }
++-----------------------+--------------------------+------------------+-----------------------------------------------------------------------------------------------------------------------------------------+
+| Feature               | ID                       | Affects bytecode | Flag/pragma                                                                                                                             |
++=======================+==========================+==================+=========================================================================================================================================+
+| AST import            | ``ast-import``           | yes              | ``--import-ast``                                                                                                                        |
++-----------------------+--------------------------+------------------+-----------------------------------------------------------------------------------------------------------------------------------------+
+| EVM Assembly import   | ``evmasm-import``        | yes              | ``--import-asm-json``                                                                                                                   |
++-----------------------+--------------------------+------------------+-----------------------------------------------------------------------------------------------------------------------------------------+
+| IR AST                | ``ir-ast``               | no               | ``--ir-ast-json``, ``--ir-optimized-ast-json``                                                                                          |
++-----------------------+--------------------------+------------------+-----------------------------------------------------------------------------------------------------------------------------------------+
+| Non-mainnet EVMs      | ``evm``                  | yes              | ``--evm-version <version name>``                                                                                                        |
++-----------------------+--------------------------+------------------+-----------------------------------------------------------------------------------------------------------------------------------------+
+| Ethdebug              | ``ethdebug``             | no               | ``--ethdebug-resources``, ``--ethdebug-compilation``, ``--ethdebug-program``, ``--ethdebug-program-runtime``, ``--debug-info ethdebug`` |
++-----------------------+--------------------------+------------------+-----------------------------------------------------------------------------------------------------------------------------------------+
+| SSA CFG               | ``ssa-cfg``              | yes              | ``--via-ssa-cfg``                                                                                                                       |
++-----------------------+--------------------------+------------------+-----------------------------------------------------------------------------------------------------------------------------------------+

@@ -27,10 +27,10 @@
 #include <liblangutil/Scanner.h>
 #include <liblangutil/SemVerHandler.h>
 #include <test/Common.h>
+#include <test/libsolidity/util/SoltestErrors.h>
 
 #include <boost/test/unit_test.hpp>
 
-using namespace std;
 using namespace solidity::langutil;
 
 namespace solidity::frontend::test
@@ -41,15 +41,16 @@ BOOST_AUTO_TEST_SUITE(SemVerMatcher)
 namespace
 {
 
-SemVerMatchExpression parseExpression(string const& _input)
+SemVerMatchExpression parseExpression(std::string const& _input)
 {
-	Scanner scanner{CharStream(_input, "")};
-	vector<string> literals;
-	vector<Token> tokens;
+	CharStream stream(_input, "");
+	Scanner scanner{stream};
+	std::vector<std::string> literals;
+	std::vector<Token> tokens;
 	while (scanner.currentToken() != Token::EOS)
 	{
 		auto token = scanner.currentToken();
-		string literal = scanner.currentLiteral();
+		std::string literal = scanner.currentLiteral();
 		if (literal.empty() && TokenTraits::toString(token))
 			literal = TokenTraits::toString(token);
 		literals.push_back(literal);
@@ -57,20 +58,48 @@ SemVerMatchExpression parseExpression(string const& _input)
 		scanner.next();
 	}
 
-	auto expression = SemVerMatchExpressionParser(tokens, literals).parse();
-	BOOST_CHECK_MESSAGE(
-		expression.isValid(),
-		"Expression \"" + _input + "\" did not parse properly."
-	);
-	return expression;
+	try
+	{
+		auto matchExpression = SemVerMatchExpressionParser(tokens, literals).parse();
+
+		BOOST_CHECK_MESSAGE(
+			matchExpression.isValid(),
+			"Expression \"" + _input + "\" did not parse properly."
+		);
+
+		return matchExpression;
+	}
+	catch (SemVerError const&)
+	{
+		// Ignored, since a test case should have a parsable version
+		soltestAssert(false);
+	}
+
+	// FIXME: Workaround for spurious GCC 12.1 warning (https://gcc.gnu.org/bugzilla/show_bug.cgi?id=105794)
+	util::unreachable();
 }
 
+}
+
+BOOST_AUTO_TEST_CASE(exception_on_invalid_version_in_semverversion_constructor)
+{
+	BOOST_CHECK_EXCEPTION(
+		SemVerVersion version("1.2"),
+		SemVerError,
+		[&](auto const& _exception) { BOOST_TEST(_exception.what() == "Invalid versionString: 1.2"); return true; }
+	);
+
+	BOOST_CHECK_EXCEPTION(
+		SemVerVersion version("-1.2.0"),
+		SemVerError,
+		[&](auto const& _exception) { BOOST_TEST(_exception.what() == "Invalid versionString: -1.2.0"); return true; }
+	);
 }
 
 BOOST_AUTO_TEST_CASE(positive_range)
 {
 	// Positive range tests
-	vector<pair<string, string>> tests = {
+	std::vector<std::pair<std::string, std::string>> tests = {
 		{"*", "1.2.3-foo"},
 		{"1.0.0 - 2.0.0", "1.2.3"},
 		{"1.0.0", "1.0.0"},
@@ -157,9 +186,9 @@ BOOST_AUTO_TEST_CASE(positive_range)
 	for (auto const& t: tests)
 	{
 		SemVerVersion version(t.second);
-		SemVerMatchExpression expression = parseExpression(t.first);
+		SemVerMatchExpression matchExpression = parseExpression(t.first);
 		BOOST_CHECK_MESSAGE(
-			expression.matches(version),
+			matchExpression.matches(version),
 			"Version \"" + t.second + "\" did not satisfy expression \"" + t.first + "\""
 		);
 	}
@@ -168,7 +197,9 @@ BOOST_AUTO_TEST_CASE(positive_range)
 BOOST_AUTO_TEST_CASE(negative_range)
 {
 	// Negative range tests
-	vector<pair<string, string>> tests = {
+	std::vector<std::pair<std::string, std::string>> tests = {
+		{"^0^1", "0.0.0"},
+		{"^0^1", "1.0.0"},
 		{"1.0.0 - 2.0.0", "2.2.3"},
 		{"1.0", "1.0.0-pre"},
 		{"1", "1.0.0-pre"},
@@ -231,9 +262,60 @@ BOOST_AUTO_TEST_CASE(negative_range)
 	for (auto const& t: tests)
 	{
 		SemVerVersion version(t.second);
-		SemVerMatchExpression expression = parseExpression(t.first);
+		auto matchExpression = parseExpression(t.first);
 		BOOST_CHECK_MESSAGE(
-			!expression.matches(version),
+			!matchExpression.matches(version),
+			"Version \"" + t.second + "\" did satisfy expression \"" + t.first + "\" " +
+			"(although it should not)"
+		);
+	}
+}
+
+BOOST_AUTO_TEST_CASE(unsigned_components_above_signed_int_max)
+{
+	// Version components in [2^31, 2^32) must compare as unsigned.
+	// Casting them to signed int overflows and used to invert the range check.
+	std::vector<std::pair<std::string, std::string>> matching = {
+		{"<3000000000.0.0", "0.8.35"},
+		{"<=3000000000.0.0", "0.8.35"},
+		{"<=3000000000.0.0", "3000000000.0.0"},
+		{">=3000000000.0.0", "3000000000.0.0"},
+		{">2147483647.0.0", "2147483648.0.0"},
+		{"<2147483648.0.0", "2147483647.0.0"},
+		{">=2147483648.0.0", "2147483648.0.0"},
+		{"<=2147483648.0.0", "2147483648.0.0"},
+		{">2147483648.0.0", "3000000000.0.0"},
+		{"<3000000000.0.0", "2147483648.0.0"},
+		// Control pair below 2^31: comparison already had the correct sign.
+		{"<999999999.0.0", "0.8.35"},
+		{">999999999.0.0", "1000000000.0.0"},
+	};
+	for (auto const& t: matching)
+	{
+		SemVerVersion version(t.second);
+		SemVerMatchExpression matchExpression = parseExpression(t.first);
+		BOOST_CHECK_MESSAGE(
+			matchExpression.matches(version),
+			"Version \"" + t.second + "\" did not satisfy expression \"" + t.first + "\""
+		);
+	}
+
+	std::vector<std::pair<std::string, std::string>> notMatching = {
+		{">3000000000.0.0", "0.8.35"},
+		{">=3000000000.0.0", "0.8.35"},
+		{"<3000000000.0.0", "3000000001.0.0"},
+		{">2147483648.0.0", "2147483647.0.0"},
+		{"<2147483648.0.0", "2147483648.0.0"},
+		{">=3000000000.0.0", "2147483647.0.0"},
+		{">999999999.0.0", "0.8.35"},
+		{"<999999999.0.0", "1000000000.0.0"},
+	};
+	for (auto const& t: notMatching)
+	{
+		SemVerVersion version(t.second);
+		SemVerMatchExpression matchExpression = parseExpression(t.first);
+		BOOST_CHECK_MESSAGE(
+			!matchExpression.matches(version),
 			"Version \"" + t.second + "\" did satisfy expression \"" + t.first + "\" " +
 			"(although it should not)"
 		);

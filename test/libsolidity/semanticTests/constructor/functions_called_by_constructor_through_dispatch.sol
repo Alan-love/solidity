@@ -24,9 +24,6 @@ contract Test {
         name = _shiftOperator(name, _bytes);
     }
 }
-
 // ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // getName() -> "def\x00\x00\x00"

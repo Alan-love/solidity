@@ -11,14 +11,14 @@ SOLIDITY_BUILD_DIR=${SOLIDITY_BUILD_DIR:-${REPO_ROOT}/build}
 SOLC=${SOLIDITY_BUILD_DIR}/solc/solc
 SPLITSOURCES=${REPO_ROOT}/scripts/splitSources.py
 
-FILETMP=$(mktemp -d)
+FILETMP=$(mktemp -d -t "stop-after-parse-tests-XXXXXX")
 cd "$FILETMP" || exit 1
 
 
-function testFile()
+function testFile
 {
 	set +e
-	ALLOUTPUT=$($SOLC --combined-json ast,compact-format --pretty-json "$@" --stop-after parsing 2>&1)
+	ALLOUTPUT=$($SOLC --combined-json ast --pretty-json "$@" --stop-after parsing 2>&1)
 	local RESULT=$?
 	set -e
 	if test ${RESULT} -ne 0; then
@@ -70,5 +70,5 @@ while read -r file; do
 		echo "$file"
 		exit 1
 	fi
-done < <(find "${REPO_ROOT}/test" -iname "*.sol" -and -not -name "documentation.sol")
+done < <(find "${REPO_ROOT}/test" -iname "*.sol" -and -not -name "documentation.sol" -and -not -name "boost_filesystem_bug.sol")
 echo

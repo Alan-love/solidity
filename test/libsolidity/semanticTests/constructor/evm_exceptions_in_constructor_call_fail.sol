@@ -13,9 +13,7 @@ contract B {
         ++test;
     }
 }
-
 // ====
-// compileViaYul: also
 // ----
 // testIt() ->
 // test() -> 2

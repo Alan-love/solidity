@@ -6,5 +6,6 @@ contract Test {
 abstract contract Other {
     function f(uint) public returns (uint);
 }
+// ====
 // ----
 // TypeError 9582: (97-121): Member "creationCode" not found or not visible after argument-dependent lookup in type(contract Other).

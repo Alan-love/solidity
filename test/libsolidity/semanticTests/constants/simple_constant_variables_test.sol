@@ -5,9 +5,5 @@ contract Foo {
 
     uint256 constant x = 56;
 }
-
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // getX() -> 56

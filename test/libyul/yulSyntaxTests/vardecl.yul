@@ -2,4 +2,5 @@
     let x := 7
 }
 // ====
-// dialect: yul
+// dialect: evm
+// ----

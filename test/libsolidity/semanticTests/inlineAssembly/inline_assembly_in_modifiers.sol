@@ -27,7 +27,7 @@ contract C {
         return true;
     }
 }
-
+// ====
 // ----
 // f() -> true
 // g() -> FAILURE

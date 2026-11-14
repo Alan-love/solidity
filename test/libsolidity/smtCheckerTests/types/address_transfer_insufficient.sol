@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract C
 {
 	function f(address payable a, address payable b) public {
@@ -10,7 +8,13 @@ contract C
 		assert(a.balance == 600);
 	}
 }
+// ====
+// SMTEngine: all
+// SMTIgnoreCex: yes
 // ----
-// Warning 6328: (213-237): CHC: Assertion violation happens here.\nCounterexample:\n\na = 7719\nb = 7719\n\n\nTransaction trace:\nconstructor()\nf(7719, 7719)
-// Warning 1236: (134-149): BMC: Insufficient funds happens here.
-// Warning 1236: (153-169): BMC: Insufficient funds happens here.
+// Warning 9207: (101-111): 'transfer' is deprecated and scheduled for removal. Use 'call{value: <amount>}("")' instead.
+// Warning 9207: (120-130): 'transfer' is deprecated and scheduled for removal. Use 'call{value: <amount>}("")' instead.
+// Warning 8656: (101-116): CHC: Insufficient funds happens here.\nCounterexample:\n\na = 0x0\nb = 0x0\n\nTransaction trace:\nC.constructor()\nC.f(0x0, 0x0)
+// Warning 8656: (120-136): CHC: Insufficient funds happens here.\nCounterexample:\n\na = 0x0\nb = 0x0\n\nTransaction trace:\nC.constructor()\nC.f(0x0, 0x0)
+// Warning 6328: (180-204): CHC: Assertion violation happens here.\nCounterexample:\n\na = 0x0476\nb = 0x0476\n\nTransaction trace:\nC.constructor()\nC.f(0x0476, 0x0476)
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

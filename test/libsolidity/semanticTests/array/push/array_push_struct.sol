@@ -18,6 +18,9 @@ contract c {
         return (data[0].a, data[0].b, data[0].c[2], data[0].d[2]);
     }
 }
-
 // ----
 // test() -> 2, 3, 4, 5
+// gas irOptimized: 135326
+// gas legacy: 139481
+// gas legacyOptimized: 135795
+// gas ssaCFGOptimized: 135139

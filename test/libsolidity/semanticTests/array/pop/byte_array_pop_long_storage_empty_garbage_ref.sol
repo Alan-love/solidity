@@ -13,8 +13,10 @@ contract c {
         }
     }
 }
-// ====
-// compileViaYul: also
 // ----
 // test() ->
-// storage: empty
+// gas irOptimized: 113628
+// gas legacy: 131256
+// gas legacyOptimized: 126668
+// gas ssaCFGOptimized: 113969
+// storageEmpty -> 1

@@ -32,9 +32,7 @@ contract Main {
         return h.getName();
     }
 }
-
 // ====
-// compileViaYul: also
 // ----
 // getFlag() -> true
 // getName() -> "abc"

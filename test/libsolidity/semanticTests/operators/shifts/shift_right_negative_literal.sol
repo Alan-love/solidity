@@ -47,10 +47,6 @@ contract C {
         return (-4267 >> 17) == -1;
     }
 }
-
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // f1() -> true
 // f2() -> true

@@ -21,25 +21,24 @@
 
 #include <libyul/optimiser/Disambiguator.h>
 
-#include <libyul/Exceptions.h>
 #include <libyul/AST.h>
-#include <libyul/AsmScope.h>
 #include <libyul/Dialect.h>
+#include <libyul/Exceptions.h>
+#include <libyul/Scope.h>
 
-using namespace std;
 using namespace solidity;
 using namespace solidity::yul;
 using namespace solidity::util;
 
-YulString Disambiguator::translateIdentifier(YulString _originalName)
+YulName Disambiguator::translateIdentifier(YulName const _originalName)
 {
-	if (m_dialect.builtin(_originalName) || m_externallyUsedIdentifiers.count(_originalName))
+	if (m_externallyUsedIdentifiers.contains(_originalName))
 		return _originalName;
 
 	assertThrow(!m_scopes.empty() && m_scopes.back(), OptimizerException, "");
 	Scope::Identifier const* id = m_scopes.back()->lookup(_originalName);
 	assertThrow(id, OptimizerException, "");
-	if (!m_translations.count(id))
+	if (!m_translations.contains(id))
 		m_translations[id] = m_nameDispenser.newName(_originalName);
 	return m_translations.at(id);
 }

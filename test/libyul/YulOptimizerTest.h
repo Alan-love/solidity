@@ -20,17 +20,8 @@
 
 #include <test/TestCase.h>
 
-#include <libyul/optimiser/OptimiserStep.h>
-#include <libyul/optimiser/NameDispenser.h>
-
-#include <libyul/YulString.h>
-
-#include <set>
-#include <memory>
-
 namespace solidity::langutil
 {
-class Scanner;
 class Error;
 using ErrorList = std::vector<std::shared_ptr<Error const>>;
 }
@@ -38,8 +29,8 @@ using ErrorList = std::vector<std::shared_ptr<Error const>>;
 namespace solidity::yul
 {
 struct AsmAnalysisInfo;
-struct Object;
-struct Dialect;
+class Object;
+class Dialect;
 }
 
 namespace solidity::yul::test
@@ -56,25 +47,17 @@ public:
 	explicit YulOptimizerTest(std::string const& _filename);
 
 	TestResult run(std::ostream& _stream, std::string const& _linePrefix = "", bool const _formatted = false) override;
-
 private:
-	std::pair<std::shared_ptr<Object>, std::shared_ptr<AsmAnalysisInfo>> parse(
-		std::ostream& _stream, std::string const& _linePrefix, bool const _formatted, std::string const& _source
+	std::shared_ptr<Object> parse(
+		std::ostream& _stream,
+		std::string const& _linePrefix,
+		bool const _formatted,
+		std::string const& _source
 	);
-	void disambiguate();
-	void updateContext();
-
-	static void printErrors(std::ostream& _stream, langutil::ErrorList const& _errors);
 
 	std::string m_optimizerStep;
 
-	Dialect const* m_dialect = nullptr;
-	std::set<YulString> m_reservedIdentifiers;
-	std::unique_ptr<NameDispenser> m_nameDispenser;
-	std::unique_ptr<OptimiserStepContext> m_context;
-
 	std::shared_ptr<Object> m_object;
-	std::shared_ptr<AsmAnalysisInfo> m_analysisInfo;
 };
 
 }

@@ -1,9 +1,13 @@
-pragma experimental SMTChecker;
-
 contract C {
 	mapping (uint => uint[][]) map;
-	function f(uint x, uint y) public view {
+	function f(uint x, uint y) public {
 		require(x == y);
+		map[x].push();
 		assert(map[x][0].length == map[y][0].length);
 	}
 }
+// ====
+// SMTEngine: all
+// ----
+// Info 1391: CHC: 3 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

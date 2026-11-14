@@ -15,53 +15,58 @@
 	along with solidity.  If not, see <http://www.gnu.org/licenses/>.
 */
 #include <libyul/optimiser/StackToMemoryMover.h>
+#include <libyul/optimiser/NameCollector.h>
 #include <libyul/optimiser/NameDispenser.h>
 #include <libyul/backends/evm/EVMDialect.h>
 
 #include <libyul/AST.h>
+#include <libyul/Utilities.h>
 
 #include <libsolutil/CommonData.h>
-#include <libsolutil/Visitor.h>
 
-using namespace std;
+#include <range/v3/algorithm/none_of.hpp>
+#include <range/v3/view/filter.hpp>
+#include <range/v3/view/transform.hpp>
+#include <range/v3/view/zip.hpp>
+#include <range/v3/range/conversion.hpp>
+
 using namespace solidity;
 using namespace solidity::yul;
 
 namespace
 {
-vector<Statement> generateMemoryStore(
+std::vector<Statement> generateMemoryStore(
 	Dialect const& _dialect,
-	langutil::SourceLocation const& _loc,
-	YulString _mpos,
+	langutil::DebugData::ConstPtr const& _debugData,
+	LiteralValue const& _mpos,
 	Expression _value
 )
 {
-	BuiltinFunction const* memoryStoreFunction = _dialect.memoryStoreFunction(_dialect.defaultType);
-	yulAssert(memoryStoreFunction, "");
-	vector<Statement> result;
-	result.emplace_back(ExpressionStatement{_loc, FunctionCall{
-		_loc,
-		Identifier{_loc, memoryStoreFunction->name},
+	std::optional<BuiltinHandle> memoryStoreFunctionHandle = _dialect.memoryStoreFunctionHandle();
+	yulAssert(memoryStoreFunctionHandle);
+	std::vector<Statement> result;
+	result.emplace_back(ExpressionStatement{_debugData, FunctionCall{
+		_debugData,
+		BuiltinName{_debugData, *memoryStoreFunctionHandle},
 		{
-			Literal{_loc, LiteralKind::Number, _mpos, {}},
+			Literal{_debugData, LiteralKind::Number, _mpos},
 			std::move(_value)
 		}
 	}});
 	return result;
 }
 
-FunctionCall generateMemoryLoad(Dialect const& _dialect, langutil::SourceLocation const& _loc, YulString _mpos)
+FunctionCall generateMemoryLoad(Dialect const& _dialect, langutil::DebugData::ConstPtr const& _debugData, LiteralValue const& _mpos)
 {
-	BuiltinFunction const* memoryLoadFunction = _dialect.memoryLoadFunction(_dialect.defaultType);
-	yulAssert(memoryLoadFunction, "");
+	std::optional<BuiltinHandle> const& memoryLoadHandle = _dialect.memoryLoadFunctionHandle();
+	yulAssert(memoryLoadHandle);
 	return FunctionCall{
-		_loc,
-		Identifier{_loc, memoryLoadFunction->name}, {
+		_debugData,
+		BuiltinName{_debugData, *memoryLoadHandle}, {
 			Literal{
-				_loc,
+				_debugData,
 				LiteralKind::Number,
-				_mpos,
-				{}
+				_mpos
 			}
 		}
 	};
@@ -71,23 +76,36 @@ FunctionCall generateMemoryLoad(Dialect const& _dialect, langutil::SourceLocatio
 void StackToMemoryMover::run(
 	OptimiserStepContext& _context,
 	u256 _reservedMemory,
-	map<YulString, uint64_t> const& _memorySlots,
+	std::map<YulName, uint64_t> const& _memorySlots,
 	uint64_t _numRequiredSlots,
 	Block& _block
 )
 {
 	VariableMemoryOffsetTracker memoryOffsetTracker(_reservedMemory, _memorySlots, _numRequiredSlots);
-	StackToMemoryMover stackToMemoryMover(_context, memoryOffsetTracker);
+	StackToMemoryMover stackToMemoryMover(
+		_context,
+		memoryOffsetTracker,
+		util::applyMap(
+			allFunctionDefinitions(_block),
+			util::mapTuple([](YulName _name, FunctionDefinition const* _funDef) {
+				return make_pair(_name, _funDef->returnVariables);
+			}),
+			std::map<YulName, NameWithDebugDataList>{}
+		)
+	);
 	stackToMemoryMover(_block);
+	_block.statements += std::move(stackToMemoryMover.m_newFunctionDefinitions);
 }
 
 StackToMemoryMover::StackToMemoryMover(
 	OptimiserStepContext& _context,
-	VariableMemoryOffsetTracker const& _memoryOffsetTracker
+	VariableMemoryOffsetTracker const& _memoryOffsetTracker,
+	std::map<YulName, NameWithDebugDataList> _functionReturnVariables
 ):
 m_context(_context),
 m_memoryOffsetTracker(_memoryOffsetTracker),
-m_nameDispenser(_context.dispenser)
+m_nameDispenser(_context.dispenser),
+m_functionReturnVariables(std::move(_functionReturnVariables))
 {
 	auto const* evmDialect = dynamic_cast<EVMDialect const*>(&_context.dialect);
 	yulAssert(
@@ -98,90 +116,189 @@ m_nameDispenser(_context.dispenser)
 
 void StackToMemoryMover::operator()(FunctionDefinition& _functionDefinition)
 {
-	for (TypedName const& param: _functionDefinition.parameters + _functionDefinition.returnVariables)
-		if (m_memoryOffsetTracker(param.name))
-		{
-			// TODO: we cannot handle function parameters yet.
-			return;
-		}
+	// It is important to first visit the function body, so that it doesn't replace the memory inits for
+	// variable arguments we might generate below.
 	ASTModifier::operator()(_functionDefinition);
+
+	std::vector<Statement> memoryVariableInits;
+
+	// All function parameters with a memory slot are moved at the beginning of the function body.
+	for (NameWithDebugData const& param: _functionDefinition.parameters)
+		if (auto slot = m_memoryOffsetTracker(param.name))
+			memoryVariableInits += generateMemoryStore(
+				m_context.dialect,
+				param.debugData,
+				*slot,
+				Identifier{param.debugData, param.name}
+			);
+
+	// All memory return variables have to be initialized to zero in memory.
+	for (NameWithDebugData const& returnVariable: _functionDefinition.returnVariables)
+		if (auto slot = m_memoryOffsetTracker(returnVariable.name))
+			memoryVariableInits += generateMemoryStore(
+				m_context.dialect,
+				returnVariable.debugData,
+				*slot,
+				Literal{returnVariable.debugData, LiteralKind::Number, LiteralValue(u256{0})}
+			);
+
+	// Special case of a function with a single return argument that needs to move to memory.
+	if (_functionDefinition.returnVariables.size() == 1 && m_memoryOffsetTracker(_functionDefinition.returnVariables.front().name))
+	{
+		NameWithDebugDataList stackParameters = _functionDefinition.parameters | ranges::views::filter(
+			std::not_fn(m_memoryOffsetTracker)
+		) | ranges::to<NameWithDebugDataList>;
+		// Generate new function without return variable and with only the non-moved parameters.
+		YulName newFunctionName = m_context.dispenser.newName(_functionDefinition.name);
+		m_newFunctionDefinitions.emplace_back(FunctionDefinition{
+			_functionDefinition.debugData,
+			newFunctionName,
+			stackParameters,
+			{},
+			std::move(_functionDefinition.body)
+		});
+		// Generate new names for the arguments to maintain disambiguation.
+		std::map<YulName, YulName> newArgumentNames;
+		for (NameWithDebugData const& _var: stackParameters)
+			newArgumentNames[_var.name] = m_context.dispenser.newName(_var.name);
+		for (auto& parameter: _functionDefinition.parameters)
+			parameter.name = util::valueOrDefault(newArgumentNames, parameter.name, parameter.name);
+		// Replace original function by a call to the new function and an assignment to the return variable from memory.
+		_functionDefinition.body = Block{_functionDefinition.debugData, std::move(memoryVariableInits)};
+		_functionDefinition.body.statements.emplace_back(ExpressionStatement{
+			_functionDefinition.debugData,
+			FunctionCall{
+				_functionDefinition.debugData,
+				Identifier{_functionDefinition.debugData, newFunctionName},
+				stackParameters | ranges::views::transform([&](NameWithDebugData const& _arg) {
+					return Expression{Identifier{_arg.debugData, newArgumentNames.at(_arg.name)}};
+				}) | ranges::to<std::vector<Expression>>
+			}
+		});
+		_functionDefinition.body.statements.emplace_back(Assignment{
+			_functionDefinition.debugData,
+			{Identifier{_functionDefinition.debugData, _functionDefinition.returnVariables.front().name}},
+			std::make_unique<Expression>(generateMemoryLoad(
+				m_context.dialect,
+				_functionDefinition.debugData,
+				*m_memoryOffsetTracker(_functionDefinition.returnVariables.front().name)
+			))
+		});
+		return;
+	}
+
+	if (!memoryVariableInits.empty())
+		_functionDefinition.body.statements = std::move(memoryVariableInits) + std::move(_functionDefinition.body.statements);
+
+	_functionDefinition.returnVariables = _functionDefinition.returnVariables | ranges::views::filter(
+		std::not_fn(m_memoryOffsetTracker)
+	) | ranges::to<NameWithDebugDataList>;
 }
 
 void StackToMemoryMover::operator()(Block& _block)
 {
-	using OptionalStatements = std::optional<vector<Statement>>;
-	auto rewriteAssignmentOrVariableDeclaration = [&](
+	using OptionalStatements = std::optional<std::vector<Statement>>;
+
+	auto rewriteAssignmentOrVariableDeclarationLeftHandSide = [this](
 		auto& _stmt,
-		auto const& _variables
+		auto& _lhsVars
 	) -> OptionalStatements {
-		using StatementType = decay_t<decltype(_stmt)>;
+		using StatementType = std::decay_t<decltype(_stmt)>;
+
+		auto debugData = _stmt.debugData;
+		if (_lhsVars.size() == 1)
+		{
+			if (auto offset = m_memoryOffsetTracker(_lhsVars.front().name))
+				return generateMemoryStore(
+					m_context.dialect,
+					debugData,
+					*offset,
+					_stmt.value ? *std::move(_stmt.value) : Literal{debugData, LiteralKind::Number, LiteralValue(u256{0})}
+				);
+			else
+				return {};
+		}
+		std::vector<std::optional<LiteralValue>> rhsMemorySlots;
 		if (_stmt.value)
-			visit(*_stmt.value);
-		bool leftHandSideNeedsMoving = util::contains_if(_variables, [&](auto const& var) {
-			return m_memoryOffsetTracker(var.name);
-		});
-		if (!leftHandSideNeedsMoving)
+		{
+			FunctionCall const* functionCall = std::get_if<FunctionCall>(_stmt.value.get());
+			yulAssert(functionCall, "");
+			if (isBuiltinFunctionCall(*functionCall))
+				rhsMemorySlots = std::vector<std::optional<LiteralValue>>(_lhsVars.size(), std::nullopt);
+			else
+			{
+				yulAssert(std::holds_alternative<Identifier>(functionCall->functionName));
+				rhsMemorySlots =
+					m_functionReturnVariables.at(std::get<Identifier>(functionCall->functionName).name) |
+					ranges::views::transform(m_memoryOffsetTracker) |
+					ranges::to<std::vector<std::optional<LiteralValue>>>;
+			}
+		}
+		else
+			rhsMemorySlots = std::vector<std::optional<LiteralValue>>(_lhsVars.size(), std::nullopt);
+
+		// Nothing to do, if the right-hand-side remains entirely on the stack and
+		// none of the variables in the left-hand-side are moved.
+		if (
+			ranges::none_of(rhsMemorySlots, [](std::optional<LiteralValue> const& _slot) { return _slot.has_value(); }) &&
+			!util::contains_if(_lhsVars, m_memoryOffsetTracker)
+		)
 			return {};
 
-		langutil::SourceLocation loc = _stmt.location;
+		std::vector<Statement> memoryAssignments;
+		std::vector<Statement> variableAssignments;
+		VariableDeclaration tempDecl{debugData, {}, std::move(_stmt.value)};
 
-		if (_variables.size() == 1)
+		yulAssert(rhsMemorySlots.size() == _lhsVars.size(), "");
+		for (auto&& [lhsVar, rhsSlot]: ranges::views::zip(_lhsVars, rhsMemorySlots))
 		{
-			optional<YulString> offset = m_memoryOffsetTracker(_variables.front().name);
-			yulAssert(offset, "");
-			return generateMemoryStore(
-				m_context.dialect,
-				loc,
-				*offset,
-				_stmt.value ? *std::move(_stmt.value) : Literal{loc, LiteralKind::Number, "0"_yulstring, {}}
-			);
-		}
+			std::unique_ptr<Expression> rhs;
+			if (rhsSlot)
+				rhs = std::make_unique<Expression>(generateMemoryLoad(m_context.dialect, debugData, *rhsSlot));
+			else
+			{
+				YulName tempVarName = m_nameDispenser.newName(lhsVar.name);
+				tempDecl.variables.emplace_back(NameWithDebugData{lhsVar.debugData, tempVarName});
+				rhs = std::make_unique<Expression>(Identifier{debugData, tempVarName});
+			}
 
-		VariableDeclaration tempDecl{loc, {}, std::move(_stmt.value)};
-		vector<Statement> memoryAssignments;
-		vector<Statement> variableAssignments;
-		for (auto& var: _variables)
-		{
-			YulString tempVarName = m_nameDispenser.newName(var.name);
-			tempDecl.variables.emplace_back(TypedName{var.location, tempVarName, {}});
-
-			if (optional<YulString> offset = m_memoryOffsetTracker(var.name))
+			if (auto offset = m_memoryOffsetTracker(lhsVar.name))
 				memoryAssignments += generateMemoryStore(
 					m_context.dialect,
-					loc,
+					_stmt.debugData,
 					*offset,
-					Identifier{loc, tempVarName}
+					std::move(*rhs)
 				);
 			else
 				variableAssignments.emplace_back(StatementType{
-					loc, {move(var)},
-					make_unique<Expression>(Identifier{loc, tempVarName})
+					debugData,
+					{ std::move(lhsVar) },
+					std::move(rhs)
 				});
 		}
+
 		std::vector<Statement> result;
-		result.emplace_back(std::move(tempDecl));
-		std::reverse(memoryAssignments.begin(), memoryAssignments.end());
+		if (tempDecl.variables.empty())
+			result.emplace_back(ExpressionStatement{debugData, *std::move(tempDecl.value)});
+		else
+			result.emplace_back(std::move(tempDecl));
+		reverse(memoryAssignments.begin(), memoryAssignments.end());
 		result += std::move(memoryAssignments);
-		std::reverse(variableAssignments.begin(), variableAssignments.end());
+		reverse(variableAssignments.begin(), variableAssignments.end());
 		result += std::move(variableAssignments);
-		return OptionalStatements{move(result)};
+		return OptionalStatements{std::move(result)};
 	};
 
 	util::iterateReplacing(
 		_block.statements,
-		[&](Statement& _statement)
+		[&](Statement& _statement) -> OptionalStatements
 		{
-			return std::visit(util::GenericVisitor{
-				[&](Assignment& _assignment) -> OptionalStatements
-				{
-					return rewriteAssignmentOrVariableDeclaration(_assignment, _assignment.variableNames);
-				},
-				[&](VariableDeclaration& _varDecl) -> OptionalStatements
-				{
-					return rewriteAssignmentOrVariableDeclaration(_varDecl, _varDecl.variables);
-				},
-				[&](auto& _stmt) -> OptionalStatements { (*this)(_stmt); return {}; }
-			}, _statement);
+			visit(_statement);
+			if (auto* assignment = std::get_if<Assignment>(&_statement))
+				return rewriteAssignmentOrVariableDeclarationLeftHandSide(*assignment, assignment->variableNames);
+			else if (auto* varDecl = std::get_if<VariableDeclaration>(&_statement))
+				return rewriteAssignmentOrVariableDeclarationLeftHandSide(*varDecl, varDecl->variables);
+			return {};
 		}
 	);
 }
@@ -190,18 +307,29 @@ void StackToMemoryMover::visit(Expression& _expression)
 {
 	ASTModifier::visit(_expression);
 	if (Identifier* identifier = std::get_if<Identifier>(&_expression))
-		if (optional<YulString> offset = m_memoryOffsetTracker(identifier->name))
-			_expression = generateMemoryLoad(m_context.dialect, identifier->location, *offset);
+		if (auto offset = m_memoryOffsetTracker(identifier->name))
+			_expression = generateMemoryLoad(m_context.dialect, identifier->debugData, *offset);
 }
 
-optional<YulString> StackToMemoryMover::VariableMemoryOffsetTracker::operator()(YulString _variable) const
+std::optional<LiteralValue> StackToMemoryMover::VariableMemoryOffsetTracker::operator()(YulName const& _variable) const
 {
 	if (m_memorySlots.count(_variable))
 	{
 		uint64_t slot = m_memorySlots.at(_variable);
 		yulAssert(slot < m_numRequiredSlots, "");
-		return YulString{util::toCompactHexWithPrefix(m_reservedMemory + 32 * (m_numRequiredSlots - slot - 1))};
+		auto const memoryOffset = m_reservedMemory + 32 * (m_numRequiredSlots - slot - 1);
+		return valueOfNumberLiteral(toCompactHexWithPrefix(memoryOffset));
 	}
 	else
 		return std::nullopt;
+}
+
+std::optional<LiteralValue> StackToMemoryMover::VariableMemoryOffsetTracker::operator()(NameWithDebugData const& _variable) const
+{
+	return (*this)(_variable.name);
+}
+
+std::optional<LiteralValue> StackToMemoryMover::VariableMemoryOffsetTracker::operator()(Identifier const& _variable) const
+{
+	return (*this)(_variable.name);
 }

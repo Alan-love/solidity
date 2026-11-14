@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract A {
 	uint public x;
 	constructor(uint a) { x = a; }
@@ -31,5 +29,9 @@ contract C is Z {
 		assert(x > 2); // should fail
 	}
 }
+// ====
+// SMTEngine: all
 // ----
-// Warning 6328: (387-400): CHC: Assertion violation happens here.\nCounterexample:\nx = 1\n\n\n\nTransaction trace:\nconstructor()
+// Warning 6328: (354-367): CHC: Assertion violation happens here.\nCounterexample:\nx = 1\n\nTransaction trace:\nC.constructor()
+// Info 1391: CHC: 2 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

@@ -9,7 +9,7 @@
         out1 := mload(32)
         out1 := sload(out1)
         out2 := add(out1, 1)
-        extcodecopy(out1, out2, 1, b)
+        calldatacopy(out2, out1, b)
         // to prevent foo from getting inlined
         if iszero(out1) { leave }
     }
@@ -20,7 +20,6 @@
 // {
 //     {
 //         let out1, out2 := foo(sload(32))
-//         sstore(0, out1)
 //         sstore(0, out2)
 //         let out1_1, out2_1 := foo(sload(8))
 //     }
@@ -28,7 +27,7 @@
 //     {
 //         out1 := sload(mload(32))
 //         out2 := add(out1, 1)
-//         extcodecopy(out1, out2, 1, b)
+//         calldatacopy(out2, out1, b)
 //         if iszero(out1) { leave }
 //     }
 // }

@@ -7,12 +7,16 @@ contract c {
     }
     function clear() public { delete data; }
 }
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
-// storage: empty
+// storageEmpty -> 1
 // fill() ->
-// storage: nonempty
+// gas irOptimized: 465010
+// gas legacy: 468825
+// gas legacyOptimized: 466238
+// gas ssaCFGOptimized: 464889
+// storageEmpty -> 0
 // clear() ->
-// storage: empty
+// gas irOptimized: 97798
+// gas legacy: 97944
+// gas legacyOptimized: 97880
+// storageEmpty -> 1

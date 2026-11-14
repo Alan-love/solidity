@@ -6,9 +6,6 @@ contract C {
         return x**y;
     }
 }
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // f(uint8,uint8): 0, 0 -> 1
 // f(uint8,uint8): 0, 1 -> 0x00

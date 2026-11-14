@@ -26,38 +26,84 @@
 # ------------------------------------------------------------------------------
 
 # note that the following directories may be cached by circleci:
-# - /usr/local/bin
-# - /usr/local/sbin
-# - /usr/local/lib
-# - /usr/local/include
-# - /usr/local/Cellar
-# - /usr/local/Homebrew
+# - /opt/boost
 
-if [ ! -f /usr/local/lib/libz3.a ] # if this file does not exists (cache was not restored), rebuild dependencies
+set -eu
+
+function validate_checksum {
+    local package="$1"
+    local expected_checksum="$2"
+
+    local actual_checksum
+    actual_checksum=$(sha256sum "$package")
+    if [[ $actual_checksum != "${expected_checksum}  ${package}" ]]
+    then
+        >&2 echo "ERROR: Wrong checksum for package $package."
+        >&2 echo "Actual:   $actual_checksum"
+        >&2 echo "Expected: $expected_checksum"
+        exit 1
+    fi
+}
+
+# Disable automatic `brew cleanup` after every install command. Unnecessary on CI machines.
+export HOMEBREW_NO_INSTALL_CLEANUP=1
+# JRE is required to run eldarica solver
+brew install \
+    cmake \
+    ccache \
+    wget \
+    coreutils \
+    diffutils \
+    grep \
+    openjdk@11 \
+    unzip
+
+# boost
+if [[ ! -f /opt/boost/include/boost/version.hpp ]]
 then
-  brew unlink python
-  brew install boost
-  brew install cmake
-  brew install wget
-  brew install coreutils
-  ./scripts/install_obsolete_jsoncpp_1_7_4.sh
-
-  # z3
-  wget https://github.com/Z3Prover/z3/releases/download/z3-4.8.9/z3-4.8.9-x64-osx-10.14.6.zip
-  unzip z3-4.8.9-x64-osx-10.14.6.zip
-  rm -f z3-4.8.9-x64-osx-10.14.6.zip
-  cp z3-4.8.9-x64-osx-10.14.6/bin/libz3.a /usr/local/lib
-  cp z3-4.8.9-x64-osx-10.14.6/bin/z3 /usr/local/bin
-  cp z3-4.8.9-x64-osx-10.14.6/include/* /usr/local/include
-  rm -rf z3-4.8.9-x64-osx-10.14.6
-
-  # evmone
-  wget https://github.com/ethereum/evmone/releases/download/v0.4.0/evmone-0.4.0-darwin-x86_64.tar.gz
-  tar xzpf evmone-0.4.0-darwin-x86_64.tar.gz -C /usr/local
-  rm -f evmone-0.4.0-darwin-x86_64.tar.gz
-
-  # hera
-  wget https://github.com/ewasm/hera/releases/download/v0.3.2/hera-0.3.2-darwin-x86_64.tar.gz
-  tar xzpf hera-0.3.2-darwin-x86_64.tar.gz -C /usr/local
-  rm -f hera-0.3.2-darwin-x86_64.tar.gz
+    boost_version="1.84.0"
+    boost_package="boost_${boost_version//./_}.tar.bz2"
+    boost_dir="boost_${boost_version//./_}"
+    wget "https://archives.boost.io/release/$boost_version/source/$boost_package"
+    tar xf "$boost_package"
+    rm "$boost_package"
+    cd "$boost_dir"
+    ./bootstrap.sh --with-toolset=clang --with-libraries=thread,system,filesystem,program_options,serialization,test
+    # the default number of jobs that b2 is taking, is the number of detected available CPU threads.
+    # install boost to /opt/boost, to use it in CMake, specify Boost_ROOT
+    sudo ./b2 -a address-model=64 architecture=arm+x86 --prefix=/opt/boost install
+    cd ..
+    sudo rm -rf "$boost_dir"
 fi
+
+# eldarica
+eldarica_version="2.1"
+wget "https://github.com/uuverifiers/eldarica/releases/download/v${eldarica_version}/eldarica-bin-${eldarica_version}.zip" -O /tmp/eld_binaries.zip
+validate_checksum /tmp/eld_binaries.zip 0ac43f45c0925383c9d2077f62bbb515fd792375f3b2b101b30c9e81dcd7785c
+unzip /tmp/eld_binaries.zip -d /tmp
+sudo mv /tmp/eldarica/{eld,eld-client,target,eldEnv} /usr/local/bin
+rm -rf /tmp/{eldarica,eld_binaries.zip}
+
+#cvc5
+cvc5_version="1.2.0"
+cvc5_archive_name="cvc5-macOS-arm64-static"
+wget "https://github.com/cvc5/cvc5/releases/download/cvc5-${cvc5_version}/${cvc5_archive_name}.zip" -O /tmp/cvc5.zip
+validate_checksum /tmp/cvc5.zip 57d2d4855af3f3865110a254e415098b4e150a655f297010e27eb292f48f7da7
+sudo unzip -j /tmp/cvc5.zip "${cvc5_archive_name}/bin/cvc5" -d /usr/local/bin
+rm -f /tmp/cvc5.zip
+
+# z3
+z3_version="4.13.3"
+z3_archive_name="z3-${z3_version}-arm64-osx-13.7"
+wget "https://github.com/Z3Prover/z3/releases/download/z3-${z3_version}/${z3_archive_name}.zip" -O /tmp/z3.zip
+validate_checksum /tmp/z3.zip 2b2c6e23ff5488722bc93002e04c6d6f60d621af9d345f2e05a8691b40280e53
+sudo unzip -j /tmp/z3.zip "${z3_archive_name}/bin/z3" -d /usr/local/bin
+rm -f /tmp/z3.zip
+
+# evmone
+evmone_version="0.22.0"
+evmone_package="evmone-${evmone_version}-darwin-arm64.tar.gz"
+wget "https://github.com/ipsilon/evmone/releases/download/v${evmone_version}/${evmone_package}"
+validate_checksum "$evmone_package" 3ff5633e49ae3726dc094c7c9819440c11d04c8036bc27f45a4385120951599c
+sudo tar xzpf "$evmone_package" -C /usr/local
+rm "$evmone_package"

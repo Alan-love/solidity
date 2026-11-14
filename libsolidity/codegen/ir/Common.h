@@ -29,6 +29,8 @@
 namespace solidity::frontend
 {
 
+class IRGenerationContext;
+
 /**
  * Structure that describes arity and co-arity of a Yul function, i.e. the number of its inputs and outputs.
  */
@@ -40,6 +42,8 @@ struct YulArity
 
 	bool operator==(YulArity const& _other) const { return in == _other.in && out == _other.out; }
 	bool operator!=(YulArity const& _other) const { return !(*this == _other); }
+	// Lexicographic order. Required to use YulArity as a map key.
+	bool operator<(YulArity const& _other) const { return in < _other.in || (in == _other.in && out < _other.out); }
 
 	size_t in;  /// Number of input parameters
 	size_t out; /// Number of output parameters
@@ -47,13 +51,17 @@ struct YulArity
 
 struct IRNames
 {
+	static std::string externalFunctionABIWrapper(Declaration const& _functionOrVardecl);
 	static std::string function(FunctionDefinition const& _function);
 	static std::string function(VariableDeclaration const& _varDecl);
+	static std::string modifierInvocation(ModifierInvocation const& _modifierInvocation);
+	static std::string functionWithModifierInner(FunctionDefinition const& _function);
 	static std::string creationObject(ContractDefinition const& _contract);
-	static std::string runtimeObject(ContractDefinition const& _contract);
+	static std::string deployedObject(ContractDefinition const& _contract);
 	static std::string internalDispatch(YulArity const& _arity);
-	static std::string implicitConstructor(ContractDefinition const& _contract);
-	static std::string constantValueFunction(VariableDeclaration const& _constant);
+	static std::string constructor(ContractDefinition const& _contract);
+	static std::string libraryAddressImmutable();
+	static std::string constantValueFunction(VariableDeclaration const& _constant, Arithmetic _arithmetic);
 	static std::string localVariable(VariableDeclaration const& _declaration);
 	static std::string localVariable(Expression const& _expression);
 	/// @returns the variable name that can be used to inspect the success or failure of an external
@@ -63,21 +71,13 @@ struct IRNames
 	static std::string zeroValue(Type const& _type, std::string const& _variableName);
 };
 
-struct IRHelpers
-{
-	static FunctionDefinition const* referencedFunctionDeclaration(Expression const& _expression);
-};
+
+/**
+ * @returns a source location comment in the form of
+ * `/// @src <sourceIndex>:<locationStart>:<locationEnd>`
+ * and marks the source index as used.
+ */
+std::string dispenseLocationComment(langutil::SourceLocation const& _location, IRGenerationContext& _context);
+std::string dispenseLocationComment(ASTNode const& _node, IRGenerationContext& _context);
 
 }
-
-// Overloading std::less() makes it possible to use YulArity as a map key. We could define operator<
-// instead but such an operator would be a bit ambiguous (e.g. YulArity{2, 2} would be be greater than
-// YulArity{1, 10} in lexicographical order but the latter has greater total number of inputs and outputs).
-template<>
-struct std::less<solidity::frontend::YulArity>
-{
-	bool operator() (solidity::frontend::YulArity const& _lhs, solidity::frontend::YulArity const& _rhs) const
-	{
-		return _lhs.in < _rhs.in || (_lhs.in == _rhs.in && _lhs.out < _rhs.out);
-	}
-};

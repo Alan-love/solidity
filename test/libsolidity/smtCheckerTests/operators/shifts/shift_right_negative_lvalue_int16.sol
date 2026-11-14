@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract C {
     function f(int16 a, uint16 b) internal pure returns (int256) {
         return a >> b;
@@ -30,10 +28,14 @@ contract C {
 		assert(f(-4266, 17) == 0);
 	}
 }
+// ====
+// SMTEngine: all
 // ----
-// Warning 6328: (242-269): CHC: Assertion violation happens here.
-// Warning 6328: (344-373): CHC: Assertion violation happens here.
-// Warning 6328: (447-474): CHC: Assertion violation happens here.
-// Warning 6328: (547-572): CHC: Assertion violation happens here.
-// Warning 6328: (645-670): CHC: Assertion violation happens here.
-// Warning 6328: (743-768): CHC: Assertion violation happens here.
+// Warning 6328: (209-236): CHC: Assertion violation happens here.
+// Warning 6328: (311-340): CHC: Assertion violation happens here.
+// Warning 6328: (414-441): CHC: Assertion violation happens here.
+// Warning 6328: (514-539): CHC: Assertion violation happens here.
+// Warning 6328: (612-637): CHC: Assertion violation happens here.
+// Warning 6328: (710-735): CHC: Assertion violation happens here.
+// Info 1391: CHC: 6 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

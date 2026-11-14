@@ -1,4 +1,3 @@
-pragma experimental SMTChecker;
 pragma abicoder               v2;
 
 contract C {
@@ -18,11 +17,19 @@ contract C {
 		assert(s1.x == 2);
 		s1.t.y = 3;
 		assert(s1.t.y == 3);
+		s1.a = new uint[](3);
 		s1.a[2] = 4;
 		assert(s1.a[2] == 4);
+		s1.ts = new T[](6);
 		s1.ts[3].y = 5;
 		assert(s1.ts[3].y == 5);
+		s1.ts[4].a = new uint[](6);
 		s1.ts[4].a[5] = 6;
 		assert(s1.ts[4].a[5] == 6);
 	}
 }
+// ====
+// SMTEngine: all
+// ----
+// Info 1391: CHC: 14 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

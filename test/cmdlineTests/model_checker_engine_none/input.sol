@@ -1,9 +1,8 @@
-// Removed to yield a warning, otherwise CI test fails with the expectation
-// "no output requested"
-//pragma solidity >=0.0;
-pragma experimental SMTChecker;
+// SPDX-License-Identifier: GPL-3.0
+pragma solidity >=0.0;
+
 contract test {
-    function f(uint x) public pure {
+	function f(uint x) public pure {
 		assert(x > 0);
-    }
+	}
 }

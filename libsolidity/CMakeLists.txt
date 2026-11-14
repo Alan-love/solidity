@@ -10,6 +10,8 @@ set(sources
 	analysis/ControlFlowBuilder.h
 	analysis/ControlFlowGraph.cpp
 	analysis/ControlFlowGraph.h
+	analysis/ControlFlowRevertPruner.cpp
+	analysis/ControlFlowRevertPruner.h
 	analysis/DeclarationContainer.cpp
 	analysis/DeclarationContainer.h
 	analysis/DeclarationTypeChecker.cpp
@@ -18,6 +20,8 @@ set(sources
 	analysis/DocStringAnalyser.h
 	analysis/DocStringTagParser.cpp
 	analysis/DocStringTagParser.h
+	analysis/FunctionCallGraph.cpp
+	analysis/FunctionCallGraph.h
 	analysis/ImmutableValidator.cpp
 	analysis/ImmutableValidator.h
 	analysis/GlobalContext.cpp
@@ -28,6 +32,8 @@ set(sources
 	analysis/OverrideChecker.h
 	analysis/PostTypeChecker.cpp
 	analysis/PostTypeChecker.h
+	analysis/PostTypeContractLevelChecker.cpp
+	analysis/PostTypeContractLevelChecker.h
 	analysis/ReferencesResolver.cpp
 	analysis/ReferencesResolver.h
 	analysis/Scoper.cpp
@@ -47,14 +53,17 @@ set(sources
 	ast/ASTAnnotations.h
 	ast/ASTEnums.h
 	ast/ASTForward.h
-	ast/ASTJsonConverter.cpp
-	ast/ASTJsonConverter.h
+	ast/ASTJsonExporter.cpp
+	ast/ASTJsonExporter.h
 	ast/ASTUtils.cpp
 	ast/ASTUtils.h
 	ast/ASTJsonImporter.cpp
 	ast/ASTJsonImporter.h
 	ast/ASTVisitor.h
+	ast/CallGraph.cpp
+	ast/CallGraph.h
 	ast/ExperimentalFeatures.h
+	ast/UserDefinableOperators.h
 	ast/Types.cpp
 	ast/Types.h
 	ast/TypeProvider.cpp
@@ -98,10 +107,18 @@ set(sources
 	formal/BMC.h
 	formal/CHC.cpp
 	formal/CHC.h
+	formal/Cvc5SMTLib2Interface.cpp
+	formal/Cvc5SMTLib2Interface.h
+	formal/EldaricaCHCSmtLib2Interface.cpp
+	formal/EldaricaCHCSmtLib2Interface.h
 	formal/EncodingContext.cpp
 	formal/EncodingContext.h
+	formal/ExpressionFormatter.cpp
+	formal/ExpressionFormatter.h
 	formal/ModelChecker.cpp
 	formal/ModelChecker.h
+	formal/ModelCheckerSettings.cpp
+	formal/ModelCheckerSettings.h
 	formal/Predicate.cpp
 	formal/Predicate.h
 	formal/PredicateInstance.cpp
@@ -118,23 +135,38 @@ set(sources
 	formal/SymbolicTypes.h
 	formal/SymbolicVariables.cpp
 	formal/SymbolicVariables.h
-	formal/VariableUsage.cpp
-	formal/VariableUsage.h
+	formal/Z3CHCSmtLib2Interface.cpp
+	formal/Z3CHCSmtLib2Interface.h
+	formal/Z3SMTLib2Interface.cpp
+	formal/Z3SMTLib2Interface.h
 	interface/ABI.cpp
 	interface/ABI.h
 	interface/CompilerStack.cpp
 	interface/CompilerStack.h
 	interface/DebugSettings.h
+	interface/Ethdebug.cpp
+	interface/Ethdebug.h
+	interface/EthdebugPointerTemplateRegistry.cpp
+	interface/EthdebugPointerTemplateRegistry.h
+	interface/EthdebugTypeRegistry.cpp
+	interface/EthdebugTypeRegistry.h
+	interface/FileReader.cpp
+	interface/FileReader.h
+	interface/ImportRemapper.cpp
+	interface/ImportRemapper.h
 	interface/GasEstimator.cpp
 	interface/GasEstimator.h
 	interface/Natspec.cpp
 	interface/Natspec.h
 	interface/OptimiserSettings.h
 	interface/ReadFile.h
+	interface/SMTSolverCommand.cpp
+	interface/SMTSolverCommand.h
 	interface/StandardCompiler.cpp
 	interface/StandardCompiler.h
 	interface/StorageLayout.cpp
 	interface/StorageLayout.h
+	interface/UniversalCallback.h
 	interface/Version.cpp
 	interface/Version.h
 	parsing/DocStringParser.cpp
@@ -145,4 +177,10 @@ set(sources
 )
 
 add_library(solidity ${sources})
-target_link_libraries(solidity PUBLIC yul evmasm langutil smtutil solutil Boost::boost)
+target_link_libraries(solidity PUBLIC yul evmasm langutil smtutil solutil Boost::boost fmt::fmt-header-only Threads::Threads)
+if (EMSCRIPTEN)
+    if(NOT ${Z3_FOUND})
+            message(FATAL_ERROR "Z3 library must be present for EMSCRIPTEN build")
+    endif()
+    target_link_libraries(solidity PUBLIC z3::libz3)
+endif()

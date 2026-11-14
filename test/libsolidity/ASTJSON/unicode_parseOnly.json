@@ -2,8 +2,7 @@
   "absolutePath": "a",
   "id": 10,
   "nodeType": "SourceUnit",
-  "nodes":
-  [
+  "nodes": [
     {
       "abstract": false,
       "baseContracts": [],
@@ -11,36 +10,32 @@
       "contractKind": "contract",
       "id": 9,
       "name": "C",
+      "nameLocation": "9:1:1",
       "nodeType": "ContractDefinition",
-      "nodes":
-      [
+      "nodes": [
         {
-          "body":
-          {
+          "body": {
             "id": 7,
             "nodeType": "Block",
             "src": "33:42:1",
-            "statements":
-            [
+            "statements": [
               {
-                "assignments":
-                [
+                "assignments": [
                   4
                 ],
-                "declarations":
-                [
+                "declarations": [
                   {
                     "constant": false,
                     "id": 4,
                     "mutability": "mutable",
                     "name": "x",
+                    "nameLocation": "49:1:1",
                     "nodeType": "VariableDeclaration",
                     "src": "35:15:1",
                     "stateVariable": false,
                     "storageLocation": "memory",
                     "typeDescriptions": {},
-                    "typeName":
-                    {
+                    "typeName": {
                       "id": 3,
                       "name": "string",
                       "nodeType": "ElementaryTypeName",
@@ -51,8 +46,7 @@
                   }
                 ],
                 "id": 6,
-                "initialValue":
-                {
+                "initialValue": {
                   "hexValue": "48656c6c6f20f09f9883",
                   "id": 5,
                   "kind": "unicodeString",
@@ -71,16 +65,15 @@
           "kind": "function",
           "modifiers": [],
           "name": "f",
+          "nameLocation": "22:1:1",
           "nodeType": "FunctionDefinition",
-          "parameters":
-          {
+          "parameters": {
             "id": 1,
             "nodeType": "ParameterList",
             "parameters": [],
             "src": "23:2:1"
           },
-          "returnParameters":
-          {
+          "returnParameters": {
             "id": 2,
             "nodeType": "ParameterList",
             "parameters": [],
@@ -92,7 +85,9 @@
           "visibility": "public"
         }
       ],
-      "src": "0:77:1"
+      "src": "0:77:1",
+      "usedErrors": [],
+      "usedEvents": []
     }
   ],
   "src": "0:78:1"

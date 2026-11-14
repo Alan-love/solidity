@@ -17,6 +17,9 @@ contract C {
         return (x, y);
     }
 }
-
 // ----
 // g() -> 2, 6
+// gas irOptimized: 178189
+// gas legacy: 181357
+// gas legacyOptimized: 179055
+// gas ssaCFGOptimized: 178205

@@ -12,8 +12,5 @@ contract C {
         return a.length;
     }
 }
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // f() -> 7

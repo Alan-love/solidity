@@ -1,4 +1,3 @@
-pragma experimental SMTChecker;
 contract C
 {
     address a;
@@ -18,5 +17,8 @@ contract C
         assert(a > 0x0000000000000000000000000000000000000000 && b);
     }
 }
+// ====
+// SMTEngine: all
 // ----
-// Warning 6328: (362-421): CHC: Assertion violation happens here.\nCounterexample:\na = 512, b = false, c = 0\nx = 1\n\n\nTransaction trace:\nconstructor()\nState: a = 0, b = false, c = 0\nf(1)
+// Warning 6328: (330-389): CHC: Assertion violation happens here.\nCounterexample:\na = 0x0200, b = false, c = 0\nx = 1\n\nTransaction trace:\nC.constructor()\nState: a = 0x0, b = false, c = 0\nC.f(1)
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

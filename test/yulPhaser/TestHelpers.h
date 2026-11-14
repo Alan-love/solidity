@@ -57,7 +57,7 @@ std::ostream& operator<<(std::ostream& _output, std::tuple<T1, T2> const& _tuple
 namespace boost::test_tools::tt_detail
 {
 
-// Boost won't find find the << operator unless we put it in the std namespace which is illegal.
+// Boost won't find the << operator unless we put it in the std namespace which is illegal.
 // The recommended solution is to overload print_log_value<> struct and make it use our global operator.
 template<typename T1,typename T2>
 struct print_log_value<std::tuple<T1, T2>>
@@ -105,32 +105,7 @@ size_t countDifferences(Chromosome const& _chromosome1, Chromosome const& _chrom
 /// Assigns indices from 0 to N to all optimisation steps available in the OptimiserSuite.
 /// This is a convenience helper to make it easier to test their distribution with tools made for
 /// integers.
-std::map<std::string, size_t> enumerateOptmisationSteps();
-
-// FILESYSTEM UTILITIES
-
-/**
- * An object that creates a unique temporary directory and automatically deletes it and its
- * content upon being destroyed.
- *
- * The directory is guaranteed to be newly created and empty. Directory names are generated
- * randomly. If a directory with the same name already exists (very unlikely but possible) the
- * object won't reuse it and will fail with an exception instead.
- */
-class TemporaryDirectory
-{
-public:
-	TemporaryDirectory(std::string const& _prefix = "yul-phaser-test-");
-	~TemporaryDirectory();
-
-	std::string const& path() const { return m_path; }
-
-	/// Converts a path relative to the directory held by the object into an absolute one.
-	std::string memberPath(std::string const& _relativePath) const;
-
-private:
-	std::string m_path;
-};
+std::map<std::string, size_t> enumerateOptimisationSteps();
 
 // STRING UTILITIES
 

@@ -25,6 +25,7 @@
 #include <test/libsolidity/SolidityExecutionFramework.h>
 
 #include <libevmasm/Instruction.h>
+#include <libevmasm/Disassemble.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -32,8 +33,8 @@
 #include <string>
 #include <tuple>
 #include <memory>
+#include <limits>
 
-using namespace std;
 using namespace solidity::util;
 using namespace solidity::evmasm;
 using namespace solidity::test;
@@ -77,9 +78,9 @@ public:
 		size_t optimizedSize = numInstructions(m_optimizedBytecode);
 		BOOST_CHECK_MESSAGE(
 			_optimizeRuns < 50 || optimizedSize < nonOptimizedSize,
-			string("Optimizer did not reduce bytecode size. Non-optimized size: ") +
-			to_string(nonOptimizedSize) + " - optimized size: " +
-			to_string(optimizedSize)
+			std::string("Optimizer did not reduce bytecode size. Non-optimized size: ") +
+			std::to_string(nonOptimizedSize) + " - optimized size: " +
+			std::to_string(optimizedSize)
 		);
 		m_optimizedContract = m_contractAddress;
 	}
@@ -96,8 +97,8 @@ public:
 		BOOST_CHECK_MESSAGE(!optimizedOutput.empty(), "No optimized output for " + _sig);
 		BOOST_CHECK_MESSAGE(!nonOptimizedOutput.empty(), "No un-optimized output for " + _sig);
 		BOOST_CHECK_MESSAGE(nonOptimizedOutput == optimizedOutput, "Computed values do not match."
-							"\nNon-Optimized: " + toHex(nonOptimizedOutput) +
-							"\nOptimized:     " + toHex(optimizedOutput));
+							"\nNon-Optimized: " + util::toHex(nonOptimizedOutput) +
+							"\nOptimized:     " + util::toHex(optimizedOutput));
 	}
 
 	/// @returns the number of instructions in the given bytecode, not taking the metadata hash
@@ -107,7 +108,7 @@ public:
 		bytes realCode = bytecodeSansMetadata(_bytecode);
 		BOOST_REQUIRE_MESSAGE(!realCode.empty(), "Invalid or missing metadata in bytecode.");
 		size_t instructions = 0;
-		evmasm::eachInstruction(realCode, [&](Instruction _instr, u256 const&) {
+		evmasm::eachInstruction(realCode, m_evmVersion, [&](Instruction _instr, u256 const&) {
 			if (!_which || *_which == _instr)
 				instructions++;
 		});
@@ -224,8 +225,8 @@ BOOST_AUTO_TEST_CASE(function_calls)
 {
 	char const* sourceCode = R"(
 		contract test {
-			function f1(uint x) public returns (uint) { return x*x; }
-			function f(uint x) public returns (uint) { return f1(7+x) - this.f1(x**9); }
+			function f1(uint x) public returns (uint) { unchecked { return x*x; } }
+			function f(uint x) public returns (uint) { unchecked { return f1(7+x) - this.f1(x**9); } }
 		}
 	)";
 	compileBothVersions(sourceCode);
@@ -255,7 +256,7 @@ BOOST_AUTO_TEST_CASE(storage_write_in_loops)
 	compareVersions("f(uint256)", 36);
 }
 
-// Test disabled with https://github.com/ethereum/solidity/pull/762
+// Test disabled with https://github.com/argotorg/solidity/pull/762
 // Information in joining branches is not retained anymore.
 BOOST_AUTO_TEST_CASE(retain_information_in_branches)
 {
@@ -285,12 +286,12 @@ BOOST_AUTO_TEST_CASE(retain_information_in_branches)
 
 	bytes optimizedBytecode = compileAndRunWithOptimizer(sourceCode, 0, "c", true);
 	size_t numSHA3s = 0;
-	eachInstruction(optimizedBytecode, [&](Instruction _instr, u256 const&) {
+	eachInstruction(optimizedBytecode, m_evmVersion, [&](Instruction _instr, u256 const&) {
 		if (_instr == Instruction::KECCAK256)
 			numSHA3s++;
 	});
 // TEST DISABLED - OPTIMIZER IS NOT EFFECTIVE ON THIS ONE ANYMORE
-//	BOOST_CHECK_EQUAL(1, numSHA3s);
+// BOOST_CHECK_EQUAL(1, numSHA3s);
 }
 
 BOOST_AUTO_TEST_CASE(store_tags_as_unions)
@@ -328,12 +329,12 @@ BOOST_AUTO_TEST_CASE(store_tags_as_unions)
 
 	bytes optimizedBytecode = compileAndRunWithOptimizer(sourceCode, 0, "test", true);
 	size_t numSHA3s = 0;
-	eachInstruction(optimizedBytecode, [&](Instruction _instr, u256 const&) {
+	eachInstruction(optimizedBytecode, m_evmVersion, [&](Instruction _instr, u256 const&) {
 		if (_instr == Instruction::KECCAK256)
 			numSHA3s++;
 	});
 // TEST DISABLED UNTIL 93693404 IS IMPLEMENTED
-//	BOOST_CHECK_EQUAL(2, numSHA3s);
+// BOOST_CHECK_EQUAL(2, numSHA3s);
 }
 
 BOOST_AUTO_TEST_CASE(incorrect_storage_access_bug)
@@ -348,7 +349,7 @@ BOOST_AUTO_TEST_CASE(incorrect_storage_access_bug)
 			function f() public returns (uint)
 			{
 				if (data[block.timestamp] == 0)
-					data[uint(-7)] = 5;
+					data[type(uint).max - 6] = 5;
 				return data[block.timestamp];
 			}
 		}
@@ -437,7 +438,7 @@ BOOST_AUTO_TEST_CASE(constant_optimization_early_exit)
 	char const* sourceCode = R"(
 	contract HexEncoding {
 		function hexEncodeTest(address addr) public returns (bytes32 ret) {
-			uint x = uint(addr) / 2**32;
+			uint x = uint(uint160(addr)) / 2**32;
 
 			// Nibble interleave
 			x = x & 0x00000000000000000000000000000000ffffffffffffffffffffffffffffffff;
@@ -457,7 +458,7 @@ BOOST_AUTO_TEST_CASE(constant_optimization_early_exit)
 			assembly {
 				mstore(0, x)
 			}
-			x = uint(addr) * 2**96;
+			x = uint160(addr) * 2**96;
 
 			// Nibble interleave
 			x = x & 0x00000000000000000000000000000000ffffffffffffffffffffffffffffffff;
@@ -492,7 +493,7 @@ BOOST_AUTO_TEST_CASE(constant_optimization_early_exit)
 #endif
 #endif
 #if __SANITIZE_ADDRESS__
-	maxDuration = numeric_limits<size_t>::max();
+	maxDuration = std::numeric_limits<size_t>::max();
 	BOOST_TEST_MESSAGE("Disabled constant optimizer run time check for address sanitizer build.");
 #endif
 	BOOST_CHECK_MESSAGE(duration <= double(maxDuration), "Compilation of constants took longer than 20 seconds.");
@@ -633,8 +634,8 @@ BOOST_AUTO_TEST_CASE(optimise_multi_stores)
 	)";
 	compileBothVersions(sourceCode);
 	compareVersions("f()");
-	BOOST_CHECK_EQUAL(numInstructions(m_nonOptimizedBytecode, Instruction::SSTORE), 8);
-	BOOST_CHECK_EQUAL(numInstructions(m_optimizedBytecode, Instruction::SSTORE), 7);
+	BOOST_CHECK_EQUAL(numInstructions(m_nonOptimizedBytecode, Instruction::SSTORE), 9);
+	BOOST_CHECK_EQUAL(numInstructions(m_optimizedBytecode, Instruction::SSTORE), 6);
 }
 
 BOOST_AUTO_TEST_CASE(optimise_constant_to_codecopy)
@@ -679,7 +680,7 @@ BOOST_AUTO_TEST_CASE(byte_access)
 	char const* sourceCode = R"(
 		contract C
 		{
-			function f(bytes32 x) public returns (byte r)
+			function f(bytes32 x) public returns (bytes1 r)
 			{
 				assembly { r := and(byte(x, 31), 0xff) }
 			}
@@ -696,11 +697,11 @@ BOOST_AUTO_TEST_CASE(shift_optimizer_bug)
 		{
 			function f(uint x) public returns (uint)
 			{
-				return (x << 1) << uint(-1);
+				return (x << 1) << type(uint).max;
 			}
 			function g(uint x) public returns (uint)
 			{
-				return (x >> 1) >> uint(-1);
+				return (x >> 1) >> type(uint).max;
 			}
 		}
 	)";

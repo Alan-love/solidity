@@ -15,21 +15,28 @@
 	along with solidity.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include <libyul/optimiser/ASTCopier.h>
 #include <libyul/optimiser/StackLimitEvader.h>
 #include <libyul/optimiser/CallGraphGenerator.h>
 #include <libyul/optimiser/FunctionCallFinder.h>
 #include <libyul/optimiser/NameDispenser.h>
+#include <libyul/optimiser/NameCollector.h>
 #include <libyul/optimiser/StackToMemoryMover.h>
+#include <libyul/backends/evm/ControlFlowGraphBuilder.h>
 #include <libyul/backends/evm/EVMDialect.h>
+#include <libyul/AsmAnalysis.h>
 #include <libyul/AST.h>
-#include <libyul/Dialect.h>
+#include <libyul/CompilabilityChecker.h>
 #include <libyul/Exceptions.h>
 #include <libyul/Object.h>
 #include <libyul/Utilities.h>
 #include <libsolutil/Algorithms.h>
 #include <libsolutil/CommonData.h>
 
-using namespace std;
+#include <range/v3/range/conversion.hpp>
+#include <range/v3/view/concat.hpp>
+#include <range/v3/view/take.hpp>
+
 using namespace solidity;
 using namespace solidity::yul;
 
@@ -38,51 +45,97 @@ namespace
 /**
  * Walks the call graph using a Depth-First-Search assigning memory slots to variables.
  * - The leaves of the call graph will get the lowest slot, increasing towards the root.
- * - ``slotsRequiredForFunction`` maps a function to the number of slots it requires (which is also the
- *   next available slot that can be used by another function that calls this function).
- * - For each function starting from the root of the call graph:
- * - Visit all children that are not already visited.
- * - Determine the maximum value ``n`` of the values of ``slotsRequiredForFunction`` among the children.
- * - If the function itself contains variables that need memory slots, but is contained in a cycle,
- *   abort the process as failure.
- * - If not, assign each variable its slot starting from ``n`` (incrementing it).
- * - Assign ``n`` to ``slotsRequiredForFunction`` of the function.
+ *
+ * - Mutually recursive functions cannot be given individual slot counts, because each of them
+ *   reaches all the others. They are therefore handled as a unit: the traversal walks the strongly-
+ *   connected components of the call graph rather than its individual functions, and every member of
+ *   a component is considered to depend on as many slots as the component as a whole.
+ *
+ * - `slotsRequiredForComponent` maps a component to the number of slots it requires (which is also
+ *   the next available slot that can be used by another function that calls into the component).
+ *
+ * - For each component starting from the one containing the root of the call graph:
+ *   - Visit all components called by any of its members that are not already visited. Calls within the
+ *     component are ignored as they cannot contribute a requirement, see below.
+ *   - Determine the maximum value `n` of the values of `slotsRequiredForComponent` among them.
+ *   - Assign each variable of each member its slot starting from `n` (incrementing it).
+ *   - Assign `n` to `slotsRequiredForComponent` of the component.
+ *
+ * Since the components form an acyclic graph, a component is never reached again while it is still
+ * being processed, and every value read from `slotsRequiredForComponent` is final.
+ * Note that members of a component of more than one function never get a slot assigned at all:
+ * `StackLimitEvader::run` bails out before reaching this point if any recursive function has
+ * variables that need to be moved to memory.
  */
 struct MemoryOffsetAllocator
 {
-	uint64_t run(YulString _function = YulString{})
+	std::uint64_t run(FunctionHandle const& _function = YulName{})
 	{
-		if (slotsRequiredForFunction.count(_function))
-			return slotsRequiredForFunction[_function];
+		std::size_t const componentIndex = callCycles.componentIndexOf(_function);
+		if (std::uint64_t const* slotsRequired = util::valueOrNullptr(slotsRequiredForComponent, componentIndex))
+			return *slotsRequired;
 
-		// Assign to zero early to guard against recursive calls.
-		slotsRequiredForFunction[_function] = 0;
+		// gather required slots from component-adjacent nodes in the call graph
+		std::uint64_t requiredSlots = 0;
+		for (FunctionHandle const& member: callCycles.component(componentIndex))
+			if (auto const* children = util::valueOrNullptr(callGraph, member))
+				for (FunctionHandle const& child: *children)
+					if (callCycles.componentIndexOf(child) != componentIndex)
+						// recurse and max if we leave SCC
+						requiredSlots = std::max(run(child), requiredSlots);
 
-		uint64_t requiredSlots = 0;
-		if (callGraph.count(_function))
-			for (YulString child: callGraph.at(_function))
-				requiredSlots = std::max(run(child), requiredSlots);
-
-		if (unreachableVariables.count(_function))
+		for (FunctionHandle const& member: callCycles.component(componentIndex))
 		{
-			yulAssert(!slotAllocations.count(_function), "");
-			for (YulString variable: unreachableVariables.at(_function))
-				if (variable.empty())
-				{
-					// TODO: Too many function arguments or return parameters.
-				}
-				else
-					slotAllocations[variable] = requiredSlots++;
+			if (!std::holds_alternative<YulName>(member))
+				continue;
+
+			if (auto const* unreachables = util::valueOrNullptr(unreachableVariables, std::get<YulName>(member)))
+			{
+				yulAssert(
+					!callCycles.isRecursive(member),
+					"Cannot move variables of a recursive function to fixed memory offsets."
+				);
+
+				if (FunctionDefinition const* functionDefinition = util::valueOrDefault(functionDefinitions, std::get<YulName>(member), nullptr))
+					if (
+						std::size_t const totalArgCount = functionDefinition->returnVariables.size() + functionDefinition->parameters.size();
+						totalArgCount > reachableStackDepth
+					)
+						for (NameWithDebugData const& var: ranges::concat_view(
+							functionDefinition->parameters,
+							functionDefinition->returnVariables
+						) | ranges::views::take(totalArgCount - reachableStackDepth))
+							slotAllocations[var.name] = requiredSlots++;
+
+				// Assign slots for all variables that become unreachable in the function body, if the above did not
+				// assign a slot for them already.
+				for (YulName variable: *unreachables)
+					// The empty case is a function with too many arguments or return values,
+					// which was already handled above.
+					if (!variable.empty() && !slotAllocations.contains(variable))
+						slotAllocations[variable] = requiredSlots++;
+			}
 		}
 
-		return slotsRequiredForFunction[_function] = requiredSlots;
+		return slotsRequiredForComponent[componentIndex] = requiredSlots;
 	}
 
-	map<YulString, set<YulString>> const& unreachableVariables;
-	map<YulString, set<YulString>> const& callGraph;
+	/// Maps function names to the set of unreachable variables in that function.
+	/// An empty variable name means that the function has too many arguments or return variables.
+	std::map<YulName, std::vector<YulName>> const& unreachableVariables;
+	/// The graph of immediate function calls of all functions.
+	std::map<FunctionHandle, std::vector<FunctionHandle>> const& callGraph;
+	/// The cycle structure of the call graph
+	CallGraphCycles const& callCycles;
+	/// Maps the name of each user-defined function to its definition.
+	std::map<YulName, FunctionDefinition const*> const& functionDefinitions;
+	/// Max stack slots reachable via DUP/SWAP for the current backend configuration.
+	size_t reachableStackDepth;
 
-	map<YulString, uint64_t> slotAllocations{};
-	map<YulString, uint64_t> slotsRequiredForFunction{};
+	/// Maps variable names to the memory slot the respective variable is assigned.
+	std::map<YulName, uint64_t> slotAllocations{};
+	/// Maps strongly connected components to the number of memory slots the respective component requires.
+	std::map<std::size_t, std::uint64_t> slotsRequiredForComponent{};
 };
 
 u256 literalArgumentValue(FunctionCall const& _call)
@@ -90,55 +143,125 @@ u256 literalArgumentValue(FunctionCall const& _call)
 	yulAssert(_call.arguments.size() == 1, "");
 	Literal const* literal = std::get_if<Literal>(&_call.arguments.front());
 	yulAssert(literal && literal->kind == LiteralKind::Number, "");
-	return valueOfLiteral(*literal);
+	return literal->value.value();
 }
+}
+
+Block StackLimitEvader::run(
+	OptimiserStepContext& _context,
+	Object const& _object
+)
+{
+	yulAssert(_object.hasCode());
+	auto const* evmDialect = dynamic_cast<EVMDialect const*>(&_context.dialect);
+	yulAssert(
+		evmDialect && evmDialect->providesObjectAccess(),
+		"StackLimitEvader can only be run on objects using the EVMDialect with object access."
+	);
+	auto astRoot = std::get<Block>(ASTCopier{}(_object.code()->root()));
+	if (evmDialect && evmDialect->evmVersion().canOverchargeGasForCall())
+	{
+		yul::AsmAnalysisInfo analysisInfo = yul::AsmAnalyzer::analyzeStrictAssertCorrect(
+			*evmDialect,
+			astRoot,
+			_object.summarizeStructure()
+		);
+		std::unique_ptr<CFG> cfg = ControlFlowGraphBuilder::build(analysisInfo, *evmDialect, astRoot);
+		run(_context, astRoot, StackLayoutGenerator::reportStackTooDeep(*cfg, *evmDialect));
+	}
+	else
+	{
+		run(_context, astRoot, CompilabilityChecker{
+			_object,
+			true,
+		}.unreachableVariables);
+	}
+	return astRoot;
 }
 
 void StackLimitEvader::run(
 	OptimiserStepContext& _context,
-	Object& _object,
-	map<YulString, set<YulString>> const& _unreachableVariables
+	Block& _astRoot,
+	std::map<YulName, std::vector<StackLayoutGenerator::StackTooDeep>> const& _stackTooDeepErrors
 )
 {
-	yulAssert(_object.code, "");
+	auto const* evmDialect = dynamic_cast<EVMDialect const*>(&_context.dialect);
+	yulAssert(
+		evmDialect && evmDialect->providesObjectAccess(),
+		"StackLimitEvader can only be run on objects using the EVMDialect with object access."
+	);
+	std::map<YulName, std::vector<YulName>> unreachableVariables;
+	for (auto&& [function, stackTooDeepErrors]: _stackTooDeepErrors)
+	{
+		auto& unreachables = unreachableVariables[function];
+		// TODO: choose wisely.
+		for (auto const& stackTooDeepError: stackTooDeepErrors)
+			for (auto variable: stackTooDeepError.variableChoices | ranges::views::take(stackTooDeepError.deficit))
+				if (!util::contains(unreachables, variable))
+					unreachables.emplace_back(variable);
+	}
+	run(_context, _astRoot, unreachableVariables);
+}
+
+void StackLimitEvader::run(
+	OptimiserStepContext& _context,
+	Block& _astRoot,
+	std::map<YulName, std::vector<YulName>> const& _unreachableVariables
+)
+{
 	auto const* evmDialect = dynamic_cast<EVMDialect const*>(&_context.dialect);
 	yulAssert(
 		evmDialect && evmDialect->providesObjectAccess(),
 		"StackLimitEvader can only be run on objects using the EVMDialect with object access."
 	);
 
-	vector<FunctionCall*> memoryGuardCalls = FunctionCallFinder::run(
-		*_object.code,
-		"memoryguard"_yulstring
-	);
+	auto const memoryGuardHandle = evmDialect->findBuiltin("memoryguard");
+	yulAssert(memoryGuardHandle, "Compiling with object access, memoryguard should be available as builtin.");
+	std::vector<FunctionCall*> const memoryGuardCalls = findFunctionCalls(_astRoot, *memoryGuardHandle);
 	// Do not optimise, if no ``memoryguard`` call is found.
 	if (memoryGuardCalls.empty())
 		return;
 
 	// Make sure all calls to ``memoryguard`` we found have the same value as argument (otherwise, abort).
 	u256 reservedMemory = literalArgumentValue(*memoryGuardCalls.front());
+	yulAssert(reservedMemory < u256(1) << 32 - 1, "");
+
 	for (FunctionCall const* memoryGuardCall: memoryGuardCalls)
 		if (reservedMemory != literalArgumentValue(*memoryGuardCall))
 			return;
 
-	CallGraph callGraph = CallGraphGenerator::callGraph(*_object.code);
+	CallGraph callGraph = CallGraphGenerator::callGraph(_astRoot);
+	CallGraphCycles const callCycles = callGraph.analyzeCallCycles();
 
 	// We cannot move variables in recursive functions to fixed memory offsets.
-	for (YulString function: callGraph.recursiveFunctions())
-		if (_unreachableVariables.count(function))
+	for (FunctionHandle function: callCycles.recursiveFunctions)
+	{
+		yulAssert(std::holds_alternative<YulName>(function), "Builtins are not recursive.");
+		if (_unreachableVariables.count(std::get<YulName>(function)))
 			return;
+	}
 
-	MemoryOffsetAllocator memoryOffsetAllocator{_unreachableVariables, callGraph.functionCalls};
+	std::map<YulName, FunctionDefinition const*> functionDefinitions = allFunctionDefinitions(_astRoot);
+
+	// Functions that call each other have to share their slot requirements, so the allocator below
+	// traverses the strongly-connected components of the call graph
+	MemoryOffsetAllocator memoryOffsetAllocator{
+		.unreachableVariables = _unreachableVariables,
+		.callGraph = callGraph.functionCalls,
+		.callCycles = callCycles,
+		.functionDefinitions = functionDefinitions,
+		.reachableStackDepth = evmDialect->reachableStackDepth()
+	};
 	uint64_t requiredSlots = memoryOffsetAllocator.run();
+	yulAssert(requiredSlots < (uint64_t(1) << 32) - 1, "");
 
-	StackToMemoryMover::run(_context, reservedMemory, memoryOffsetAllocator.slotAllocations, requiredSlots, *_object.code);
+	StackToMemoryMover::run(_context, reservedMemory, memoryOffsetAllocator.slotAllocations, requiredSlots, _astRoot);
 
-	yulAssert(requiredSlots < std::numeric_limits<uint64_t>::max() / 32, "");
 	reservedMemory += 32 * requiredSlots;
-	for (FunctionCall* memoryGuardCall: FunctionCallFinder::run(*_object.code, "memoryguard"_yulstring))
+	for (FunctionCall* memoryGuardCall: findFunctionCalls(_astRoot, *memoryGuardHandle))
 	{
 		Literal* literal = std::get_if<Literal>(&memoryGuardCall->arguments.front());
 		yulAssert(literal && literal->kind == LiteralKind::Number, "");
-		literal->value = YulString{util::toCompactHexWithPrefix(reservedMemory)};
+		literal->value = LiteralValue{reservedMemory, toCompactHexWithPrefix(reservedMemory)};
 	}
 }

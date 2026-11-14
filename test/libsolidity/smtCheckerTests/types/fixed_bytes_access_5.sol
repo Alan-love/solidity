@@ -1,16 +1,18 @@
-pragma experimental SMTChecker;
-
 contract C {
 	function f() public pure {
 		bytes4 x = 0x01020304;
-		byte b = 0x02;
+		bytes1 b = 0x02;
 		assert(x[0] == b); // fails
 		assert(x[1] == b);
 		assert(x[2] == b); // fails
 		assert(x[3] == b); // fails
 	}
 }
+// ====
+// SMTEngine: all
 // ----
-// Warning 6328: (118-135): CHC: Assertion violation happens here.\nCounterexample:\n\n\n\n\nTransaction trace:\nconstructor()\nf()
-// Warning 6328: (169-186): CHC: Assertion violation happens here.\nCounterexample:\n\n\n\n\nTransaction trace:\nconstructor()\nf()
-// Warning 6328: (199-216): CHC: Assertion violation happens here.\nCounterexample:\n\n\n\n\nTransaction trace:\nconstructor()\nf()
+// Warning 6328: (87-104): CHC: Assertion violation happens here.\nCounterexample:\n\nx = 0x01020304\nb = 0x02\n\nTransaction trace:\nC.constructor()\nC.f()
+// Warning 6328: (138-155): CHC: Assertion violation happens here.\nCounterexample:\n\nx = 0x01020304\nb = 0x02\n\nTransaction trace:\nC.constructor()\nC.f()
+// Warning 6328: (168-185): CHC: Assertion violation happens here.\nCounterexample:\n\nx = 0x01020304\nb = 0x02\n\nTransaction trace:\nC.constructor()\nC.f()
+// Info 1391: CHC: 5 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

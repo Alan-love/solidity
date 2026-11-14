@@ -4,9 +4,6 @@ contract A {
     function fow() public { x = 3; }
     fallback () external { x = 2; }
 }
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // (): hex"d88e0b"
 // x() -> 2

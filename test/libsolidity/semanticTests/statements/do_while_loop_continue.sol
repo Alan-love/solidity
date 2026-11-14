@@ -10,8 +10,5 @@ contract test {
         return 42;
     }
 }
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // f() -> 42

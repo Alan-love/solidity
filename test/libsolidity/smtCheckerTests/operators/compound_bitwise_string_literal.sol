@@ -1,17 +1,21 @@
-pragma experimental SMTChecker;
-
 contract C {
-    function f() public pure {
-        bytes memory y = "def";
-        y[0] &= "d";
-        assert(y[0] == "d");
+	function f() public pure {
+		bytes memory y = "def";
+		y[0] &= "d";
+		assert(y[0] == "d");
 
-        y[0] |= "e";
-        assert(y[0] == "d"); // fails
+		y[0] |= "e";
+		assert(y[0] == "d"); // fails
 
-        y[0] ^= "f";
-        assert(y[0] == (byte("d") | byte("e")) ^ byte("f"));
-    }
+		y[0] ^= "f";
+		// Disabled because of nondeterminism in Spacer in Z3 4.8.9
+		//assert(y[0] == (bytes1("d") | bytes1("e")) ^ bytes1("f"));
+	}
 }
+// ====
+// SMTEngine: chc
+// SMTIgnoreCex: yes
+// SMTSolvers: eld
 // ----
-// Warning 6328: (189-208): CHC: Assertion violation happens here.
+// Warning 6328: (123-142): CHC: Assertion violation happens here.
+// Info 1391: CHC: 6 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.

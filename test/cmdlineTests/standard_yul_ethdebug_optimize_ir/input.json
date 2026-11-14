@@ -1,0 +1,16 @@
+{
+	"language": "Yul",
+	"sources": {
+		"C": {"urls": ["in.yul"]}
+	},
+	"settings": {
+	    "debug": {"debugInfo": ["location", "snippet", "ast-id", "ethdebug"]},
+		"experimental": true,
+		"optimizer": {
+			"enabled": true
+		},
+		"outputSelection": {
+			"*": {"*": ["evm.bytecode.ethdebug", "ir"]}
+		}
+	}
+}

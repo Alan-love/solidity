@@ -17,12 +17,12 @@ contract C {
         }
     }
 }
-
 // ====
 // EVMVersion: >=constantinople
-// compileViaYul: also
 // ----
 // constructor(), 23 wei ->
+// gas legacy: 56667
+// gas legacy code: 42000
 // f() -> 0
 // g() -> 1
 // h() -> 23

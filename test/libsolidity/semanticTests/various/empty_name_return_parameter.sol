@@ -3,9 +3,5 @@ contract test {
         return k;
     }
 }
-
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // f(uint256): 9 -> 9

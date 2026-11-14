@@ -1,7 +1,9 @@
+Warning: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.
+
 Warning: BMC: Assertion violation happens here.
- --> model_checker_engine_bmc/input.sol:6:3:
+ --> input.sol:5:3:
   |
-6 | 		assert(x > 0);
+5 | 		assert(x > 0);
   | 		^^^^^^^^^^^^^
 Note: Counterexample:
   x = 0

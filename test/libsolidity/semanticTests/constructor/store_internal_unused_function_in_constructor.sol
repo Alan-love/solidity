@@ -13,9 +13,6 @@ contract C {
         return x();
     }
 }
-
 // ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // t() -> 7

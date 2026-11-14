@@ -1,4 +1,3 @@
-pragma experimental SMTChecker;
 contract C {
 	function f() public {
 		try this.f() {}
@@ -9,8 +8,6 @@ contract C {
 }
 // ====
 // EVMVersion: >=byzantium
+// SMTEngine: all
 // ----
-// Warning 7645: (83-85): Assertion checker does not support try/catch clauses.
-// Warning 7645: (88-122): Assertion checker does not support try/catch clauses.
-// Warning 7645: (83-85): Assertion checker does not support try/catch clauses.
-// Warning 7645: (88-122): Assertion checker does not support try/catch clauses.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

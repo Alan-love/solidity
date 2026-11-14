@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract A {
 	int x;
 }
@@ -59,12 +57,16 @@ contract D4 is B, C {
 		assert(x == -1); // should hold (constructor of C is executed AFTER constructor of B)
 	}
 }
+// ====
+// SMTEngine: all
 // ----
-// Warning 6328: (370-384): CHC: Assertion violation happens here.\nCounterexample:\nz = 1, y = 1, x = 0\n\n\n\nTransaction trace:\nconstructor()
-// Warning 6328: (403-418): CHC: Assertion violation happens here.\nCounterexample:\nz = 1, y = 1, x = 0\n\n\n\nTransaction trace:\nconstructor()
-// Warning 6328: (493-507): CHC: Assertion violation happens here.\nCounterexample:\nz = 2, y = 1, x = (- 1)\n\n\n\nTransaction trace:\nconstructor()
-// Warning 6328: (526-540): CHC: Assertion violation happens here.\nCounterexample:\nz = 2, y = 1, x = (- 1)\n\n\n\nTransaction trace:\nconstructor()
-// Warning 6328: (703-717): CHC: Assertion violation happens here.\nCounterexample:\nz = 1, y = 2, x = 1\n\n\n\nTransaction trace:\nconstructor()
-// Warning 6328: (769-784): CHC: Assertion violation happens here.\nCounterexample:\nz = 1, y = 2, x = 1\n\n\n\nTransaction trace:\nconstructor()
-// Warning 6328: (860-874): CHC: Assertion violation happens here.\nCounterexample:\nz = 2, y = 2, x = (- 1)\n\n\n\nTransaction trace:\nconstructor()
-// Warning 6328: (893-907): CHC: Assertion violation happens here.\nCounterexample:\nz = 2, y = 2, x = (- 1)\n\n\n\nTransaction trace:\nconstructor()
+// Warning 6328: (337-351): CHC: Assertion violation happens here.\nCounterexample:\nz = 1, y = 1, x = 0\n\nTransaction trace:\nD1.constructor()
+// Warning 6328: (370-385): CHC: Assertion violation happens here.\nCounterexample:\nz = 1, y = 1, x = 0\n\nTransaction trace:\nD1.constructor()
+// Warning 6328: (460-474): CHC: Assertion violation happens here.\nCounterexample:\nz = 2, y = 1, x = (- 1)\n\nTransaction trace:\nD2.constructor()
+// Warning 6328: (493-507): CHC: Assertion violation happens here.\nCounterexample:\nz = 2, y = 1, x = (- 1)\n\nTransaction trace:\nD2.constructor()
+// Warning 6328: (670-684): CHC: Assertion violation happens here.\nCounterexample:\nz = 1, y = 2, x = 1\n\nTransaction trace:\nD3.constructor()
+// Warning 6328: (736-751): CHC: Assertion violation happens here.\nCounterexample:\nz = 1, y = 2, x = 1\n\nTransaction trace:\nD3.constructor()
+// Warning 6328: (827-841): CHC: Assertion violation happens here.\nCounterexample:\nz = 2, y = 2, x = (- 1)\n\nTransaction trace:\nD4.constructor()
+// Warning 6328: (860-874): CHC: Assertion violation happens here.\nCounterexample:\nz = 2, y = 2, x = (- 1)\n\nTransaction trace:\nD4.constructor()
+// Info 1391: CHC: 4 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

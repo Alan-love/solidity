@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 abstract contract D {
 	function d() external virtual;
 }
@@ -22,5 +20,9 @@ contract C {
 		assert(oldX == x);
 	}
 }
+// ====
+// SMTEngine: all
+// SMTIgnoreCex: yes
 // ----
-// Warning 6328: (256-273): CHC: Assertion violation happens here.
+// Warning 6328: (223-240): CHC: Assertion violation happens here.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

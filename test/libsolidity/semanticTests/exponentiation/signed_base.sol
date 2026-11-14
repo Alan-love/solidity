@@ -10,8 +10,5 @@ contract test {
         return (x**y1, x**y2);
     }
 }
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // f() -> 9, -27

@@ -11,8 +11,5 @@ contract test {
         r += (++v) * 0x10000;
     }
 }
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // f() -> 0x053866

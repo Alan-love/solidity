@@ -31,7 +31,6 @@
 #include <liblangutil/SourceLocation.h>
 #include <libsolutil/Common.h>
 
-#include <boost/noncopyable.hpp>
 #include <functional>
 #include <memory>
 
@@ -40,7 +39,8 @@ namespace solidity::evmasm
 class AssemblyItem; // forward
 }
 
-namespace solidity::frontend {
+namespace solidity::frontend
+{
 
 // forward declarations
 class CompilerContext;
@@ -132,7 +132,7 @@ private:
 
 	/// @returns true if the operator applied to the given type requires a cleanup prior to the
 	/// operation.
-	static bool cleanupNeededForOp(Type::Category _type, Token _op);
+	static bool cleanupNeededForOp(Type::Category _type, Token _op, Arithmetic _arithmetic);
 
 	void acceptAndConvert(Expression const& _expression, Type const& _type, bool _cleanupNeeded = false);
 
@@ -151,7 +151,7 @@ void ExpressionCompiler::setLValue(Expression const& _expression, Arguments cons
 	solAssert(!m_currentLValue, "Current LValue not reset before trying to set new one.");
 	std::unique_ptr<LValueType> lvalue = std::make_unique<LValueType>(m_context, _arguments...);
 	if (_expression.annotation().willBeWrittenTo)
-		m_currentLValue = move(lvalue);
+		m_currentLValue = std::move(lvalue);
 	else
 		lvalue->retrieveValue(_expression.location(), true);
 }

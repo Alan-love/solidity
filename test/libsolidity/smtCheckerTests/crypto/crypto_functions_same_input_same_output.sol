@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract C {
 	function k(bytes memory b0) public pure {
 		bytes memory b1 = b0;
@@ -26,3 +24,8 @@ contract C {
 		assert(a0 == a1);
 	}
 }
+// ====
+// SMTEngine: all
+// ----
+// Info 1391: CHC: 4 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

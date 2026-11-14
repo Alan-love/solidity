@@ -22,6 +22,5 @@ contract C is A {
         _;
     }
 }
-
 // ----
 // getData() -> 6

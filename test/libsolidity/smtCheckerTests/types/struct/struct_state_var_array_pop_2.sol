@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract C {
 	struct S {
 		uint x;
@@ -17,6 +15,11 @@ contract C {
 		s.a.pop();
 	}
 }
+// ====
+// SMTEngine: all
+// SMTIgnoreCex: yes
 // ----
-// Warning 2529: (133-142): CHC: Empty array "pop" happens here.\nCounterexample:\ns = {x: 38, a: []}\n_x = 38\n\n\nTransaction trace:\nconstructor()\nState: s = {x: 0, a: []}\nf(38)
-// Warning 6328: (189-213): CHC: Assertion violation happens here.\nCounterexample:\ns = {x: 115792089237316195423570985008687907853269984665640564039457584007913129639897, a: [115792089237316195423570985008687907853269984665640564039457584007913129639897, 0]}\n_x = 115792089237316195423570985008687907853269984665640564039457584007913129639897\n\n\nTransaction trace:\nconstructor()\nState: s = {x: 0, a: []}\nf(115792089237316195423570985008687907853269984665640564039457584007913129639897)
+// Warning 2529: (100-109): CHC: Empty array "pop" happens here.\nCounterexample:\ns = {x: 0, a: []}\n_x = 0\n\nTransaction trace:\nC.constructor()\nState: s = {x: 0, a: []}\nC.f(0)
+// Warning 6328: (156-180): CHC: Assertion violation happens here.\nCounterexample:\ns = {x: 8856, a: [8856, 0]}\n_x = 8856\n\nTransaction trace:\nC.constructor()\nState: s = {x: 0, a: []}\nC.f(8856)
+// Info 1391: CHC: 5 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

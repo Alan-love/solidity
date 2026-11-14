@@ -1,0 +1,30 @@
+name: External contributor greeter
+
+on:
+  pull_request_target:
+    types:
+      - opened
+
+permissions:
+  pull-requests: write
+  contents: read
+
+env:
+  DRY_RUN: false
+
+jobs:
+  comment-external-pr:
+    runs-on: ubuntu-latest
+    steps:
+      # Note: this step requires that the INTERNAL_CONTRIBUTORS environment variable
+      # is already defined in the repository with the current json list of internal contributors.
+      - name: Labeling external contribution PR
+        if: "!contains(fromJSON(vars.INTERNAL_CONTRIBUTORS), github.event.pull_request.user.login)"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.html_url }}
+        run: |
+          echo "Labeling a newly submitted or reopened external PR: $PR"
+          if [[ $DRY_RUN == 'false' ]]; then
+            gh pr edit "$PR" --add-label "external contribution :star:"
+          fi

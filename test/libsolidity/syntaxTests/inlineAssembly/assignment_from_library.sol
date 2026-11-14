@@ -8,3 +8,6 @@ contract C {
     }
   }
 }
+// ====
+// compileViaYul: false
+// ----

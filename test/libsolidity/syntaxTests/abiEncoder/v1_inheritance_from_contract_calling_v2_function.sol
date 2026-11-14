@@ -11,15 +11,18 @@ contract A {
 
 contract B {
     constructor() {
-        A(0x00).get();
+        A(address(0x00)).get();
     }
 
     function foo() public view {
-        A(0x00).get();
+        A(address(0x00)).get();
     }
 }
 ==== Source: B ====
+pragma abicoder v1;
 import "A";
 
 contract C is B {}
+// ====
 // ----
+// Warning 9511: (B:0-19): ABI coder v1 is deprecated and scheduled for removal. Use ABI coder v2 instead.

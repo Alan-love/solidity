@@ -1,0 +1,19 @@
+contract DepositContract {
+    uint constant MAX_DEPOSIT_COUNT = 2**32 - 1;
+
+    uint256 deposit_count;
+    uint256 deposit_count_2;
+
+    function deposit() external {
+        require(deposit_count < MAX_DEPOSIT_COUNT);
+        deposit_count += 1;
+        deposit_count_2 += 10; // should fail
+    }
+}
+// ====
+// SMTEngine: all
+// ----
+// Warning 4984: (256-277): CHC: Overflow (resulting value larger than 2**256 - 1) might happen here.
+// Info 1391: CHC: 1 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.
+// Warning 2661: (256-277): BMC: Overflow (resulting value larger than 2**256 - 1) happens here.

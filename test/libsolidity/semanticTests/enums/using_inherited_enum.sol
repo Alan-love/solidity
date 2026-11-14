@@ -8,8 +8,5 @@ contract test is base {
         _ret = Choice.B;
     }
 }
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // answer() -> 1

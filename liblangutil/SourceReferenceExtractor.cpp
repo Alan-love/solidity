@@ -16,56 +16,88 @@
 */
 // SPDX-License-Identifier: GPL-3.0
 #include <liblangutil/SourceReferenceExtractor.h>
-#include <liblangutil/CharStream.h>
 #include <liblangutil/Exceptions.h>
+#include <liblangutil/CharStreamProvider.h>
+#include <liblangutil/CharStream.h>
 
+#include <algorithm>
 #include <cmath>
-#include <iomanip>
+#include <cstddef>
+#include <string_view>
+#include <variant>
 
-using namespace std;
 using namespace solidity;
 using namespace solidity::langutil;
 
-SourceReferenceExtractor::Message SourceReferenceExtractor::extract(util::Exception const& _exception, string _category)
+namespace
+{
+
+// If `_position` points into the middle of a multi-byte character, yield the beginning of the character. Otherwise,
+// this is the identity.
+std::string::size_type toUTF8SequenceStart(std::string_view const _text, std::string::size_type _position)
+{
+	while (
+		_position > 0 &&
+		_position < _text.size() &&
+		(static_cast<std::byte>(_text[_position]) & std::byte{0xc0}) == std::byte{0x80}
+	)
+		--_position;
+	return _position;
+}
+
+}
+
+SourceReferenceExtractor::Message SourceReferenceExtractor::extract(
+	CharStreamProvider const& _charStreamProvider,
+	util::Exception const& _exception,
+	std::variant<Error::Type, Error::Severity> _typeOrSeverity
+)
 {
 	SourceLocation const* location = boost::get_error_info<errinfo_sourceLocation>(_exception);
 
-	string const* message = boost::get_error_info<util::errinfo_comment>(_exception);
-	SourceReference primary = extract(location, message ? *message : "");
+	std::string const* message = boost::get_error_info<util::errinfo_comment>(_exception);
+	SourceReference primary = extract(_charStreamProvider, location, message ? *message : "");
 
 	std::vector<SourceReference> secondary;
 	auto secondaryLocation = boost::get_error_info<errinfo_secondarySourceLocation>(_exception);
 	if (secondaryLocation && !secondaryLocation->infos.empty())
 		for (auto const& info: secondaryLocation->infos)
-			secondary.emplace_back(extract(&info.second, info.first));
+			secondary.emplace_back(extract(_charStreamProvider, &info.second, info.first));
 
-	return Message{std::move(primary), _category, std::move(secondary), nullopt};
+	return Message{std::move(primary), _typeOrSeverity, std::move(secondary), std::nullopt};
 }
 
-SourceReferenceExtractor::Message SourceReferenceExtractor::extract(Error const& _error)
+SourceReferenceExtractor::Message SourceReferenceExtractor::extract(
+	CharStreamProvider const& _charStreamProvider,
+	Error const& _error,
+	std::variant<Error::Type, Error::Severity> _typeOrSeverity
+)
 {
-	string category = (_error.type() == Error::Type::Warning) ? "Warning" : "Error";
-	Message message = extract(_error, category);
+	Message message = extract(_charStreamProvider, static_cast<util::Exception>(_error), _typeOrSeverity);
 	message.errorId = _error.errorId();
 	return message;
 }
 
-SourceReference SourceReferenceExtractor::extract(SourceLocation const* _location, std::string message)
+SourceReference SourceReferenceExtractor::extract(
+	CharStreamProvider const& _charStreamProvider,
+	SourceLocation const* _location,
+	std::string message
+)
 {
-	if (!_location || !_location->source.get()) // Nothing we can extract here
+	if (!_location || !_location->sourceName) // Nothing we can extract here
 		return SourceReference::MessageOnly(std::move(message));
 
 	if (!_location->hasText()) // No source text, so we can only extract the source name
-		return SourceReference::MessageOnly(std::move(message), _location->source->name());
+		return SourceReference::MessageOnly(std::move(message), *_location->sourceName);
 
-	shared_ptr<CharStream> const& source = _location->source;
+	CharStream const& charStream = _charStreamProvider.charStream(*_location->sourceName);
 
-	LineColumn const interest = source->translatePositionToLineColumn(_location->start);
+	LineColumn const interest = charStream.translatePositionToLineColumn(_location->start);
 	LineColumn start = interest;
-	LineColumn end = source->translatePositionToLineColumn(_location->end);
+	LineColumn end = charStream.translatePositionToLineColumn(_location->end);
 	bool const isMultiline = start.line != end.line;
 
-	string line = source->lineAtPosition(_location->start);
+	std::string line = charStream.lineAtPosition(_location->start);
 
 	int locationLength =
 		isMultiline ?
@@ -74,8 +106,11 @@ SourceReference SourceReferenceExtractor::extract(SourceLocation const* _locatio
 
 	if (locationLength > 150)
 	{
-		auto const lhs = static_cast<size_t>(start.column) + 35;
-		string::size_type const rhs = (isMultiline ? line.length() : static_cast<size_t>(end.column)) - 35;
+		std::string::size_type const lhs = toUTF8SequenceStart(line, static_cast<std::string::size_type>(start.column) + 35);
+		std::string::size_type const rhs = toUTF8SequenceStart(
+			line,
+			(isMultiline ? line.length() : static_cast<size_t>(end.column)) - 35
+		);
 		line = line.substr(0, lhs) + " ... " + line.substr(rhs);
 		end.column = start.column + 75;
 		locationLength = 75;
@@ -84,12 +119,13 @@ SourceReference SourceReferenceExtractor::extract(SourceLocation const* _locatio
 	if (line.length() > 150)
 	{
 		int const len = static_cast<int>(line.length());
-		line = line.substr(
-			static_cast<size_t>(max(0, start.column - 35)),
-			static_cast<size_t>(min(start.column, 35)) + static_cast<size_t>(
-				min(locationLength + 35,len - start.column)
-			)
+		std::string::size_type const cutStart = toUTF8SequenceStart(line, static_cast<std::string::size_type>(std::max(0, start.column - 35)));
+		std::string::size_type const cutEnd = toUTF8SequenceStart(
+			line,
+			static_cast<std::string::size_type>(start.column) + static_cast<std::string::size_type>(std::min(locationLength + 35, len - start.column))
 		);
+		solAssert(cutEnd >= cutStart);
+		line = line.substr(cutStart, cutEnd - cutStart);
 		if (start.column + locationLength + 35 < len)
 			line += " ...";
 		if (start.column > 35)
@@ -102,11 +138,11 @@ SourceReference SourceReferenceExtractor::extract(SourceLocation const* _locatio
 
 	return SourceReference{
 		std::move(message),
-		source->name(),
+		*_location->sourceName,
 		interest,
 		isMultiline,
 		line,
-		start.column,
-		end.column,
+		std::min(start.column, static_cast<int>(line.length())),
+		std::min(end.column, static_cast<int>(line.length()))
 	};
 }

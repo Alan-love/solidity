@@ -31,7 +31,6 @@
 #include <boost/algorithm/string/predicate.hpp>
 
 
-using namespace std;
 using namespace solidity;
 using namespace solidity::frontend;
 using namespace solidity::langutil;
@@ -46,7 +45,7 @@ namespace
 // Helper struct to do a search by name
 struct MatchByName
 {
-	string const& m_name;
+	std::string const& m_name;
 	bool operator()(OverrideProxy const& _item)
 	{
 		return _item.name() == m_name;
@@ -61,7 +60,7 @@ struct MatchByName
  */
 struct OverrideGraph
 {
-	OverrideGraph(set<OverrideProxy> const& _baseCallables)
+	OverrideGraph(std::set<OverrideProxy> const& _baseCallables)
 	{
 		for (auto const& baseFunction: _baseCallables)
 			addEdge(0, visit(baseFunction));
@@ -86,7 +85,8 @@ private:
 		int currentNode = static_cast<int>(numNodes++);
 		nodes[_function] = currentNode;
 		nodeInv[currentNode] = _function;
-		if (_function.overrides())
+
+		if (!_function.baseFunctions().empty())
 			for (auto const& baseFunction: _function.baseFunctions())
 				addEdge(currentNode, visit(baseFunction));
 		else
@@ -130,17 +130,17 @@ private:
 				run(vInd, _depth + 1);
 				if (m_low[vInd] >= m_depths[_u] && m_parent[_u] != -1)
 					m_cutVertices.insert(m_graph.nodeInv.at(static_cast<int>(_u)));
-				m_low[_u] = min(m_low[_u], m_low[vInd]);
+				m_low[_u] = std::min(m_low[_u], m_low[vInd]);
 			}
 			else if (v != m_parent[_u])
-				m_low[_u] = min(m_low[_u], m_depths[vInd]);
+				m_low[_u] = std::min(m_low[_u], m_depths[vInd]);
 		}
 	}
 };
 
-vector<ContractDefinition const*> resolveDirectBaseContracts(ContractDefinition const& _contract)
+std::vector<ContractDefinition const*> resolveDirectBaseContracts(ContractDefinition const& _contract)
 {
-	vector<ContractDefinition const*> resolvedContracts;
+	std::vector<ContractDefinition const*> resolvedContracts;
 
 	for (ASTPointer<InheritanceSpecifier> const& specifier: _contract.baseContracts())
 	{
@@ -154,12 +154,12 @@ vector<ContractDefinition const*> resolveDirectBaseContracts(ContractDefinition 
 	return resolvedContracts;
 }
 
-vector<ASTPointer<UserDefinedTypeName>> sortByContract(vector<ASTPointer<UserDefinedTypeName>> const& _list)
+std::vector<ASTPointer<IdentifierPath>> sortByContract(std::vector<ASTPointer<IdentifierPath>> const& _list)
 {
 	auto sorted = _list;
 
 	stable_sort(sorted.begin(), sorted.end(),
-		[] (ASTPointer<UserDefinedTypeName> _a, ASTPointer<UserDefinedTypeName> _b) {
+		[] (ASTPointer<IdentifierPath> _a, ASTPointer<IdentifierPath> _b) {
 			if (!_a || !_b)
 				return _a < _b;
 
@@ -196,17 +196,17 @@ bool OverrideProxy::operator<(OverrideProxy const& _other) const
 
 bool OverrideProxy::isVariable() const
 {
-	return holds_alternative<VariableDeclaration const*>(m_item);
+	return std::holds_alternative<VariableDeclaration const*>(m_item);
 }
 
 bool OverrideProxy::isFunction() const
 {
-	return holds_alternative<FunctionDefinition const*>(m_item);
+	return std::holds_alternative<FunctionDefinition const*>(m_item);
 }
 
 bool OverrideProxy::isModifier() const
 {
-	return holds_alternative<ModifierDefinition const*>(m_item);
+	return std::holds_alternative<ModifierDefinition const*>(m_item);
 }
 
 bool OverrideProxy::CompareBySignature::operator()(OverrideProxy const& _a, OverrideProxy const& _b) const
@@ -221,18 +221,18 @@ size_t OverrideProxy::id() const
 	}, m_item);
 }
 
-shared_ptr<OverrideSpecifier> OverrideProxy::overrides() const
+std::shared_ptr<OverrideSpecifier> OverrideProxy::overrides() const
 {
 	return std::visit(GenericVisitor{
 		[&](auto const* _item) { return _item->overrides(); }
 	}, m_item);
 }
 
-set<OverrideProxy> OverrideProxy::baseFunctions() const
+std::set<OverrideProxy> OverrideProxy::baseFunctions() const
 {
 	return std::visit(GenericVisitor{
-		[&](auto const* _item) -> set<OverrideProxy> {
-			set<OverrideProxy> ret;
+		[&](auto const* _item) -> std::set<OverrideProxy> {
+			std::set<OverrideProxy> ret;
 			for (auto const* f: _item->annotation().baseFunctions)
 				ret.insert(makeOverrideProxy(*f));
 			return ret;
@@ -255,10 +255,10 @@ void OverrideProxy::storeBaseFunction(OverrideProxy const& _base) const
 	}, m_item);
 }
 
-string const& OverrideProxy::name() const
+std::string const& OverrideProxy::name() const
 {
 	return std::visit(GenericVisitor{
-		[&](auto const* _item) -> string const& { return _item->name(); }
+		[&](auto const* _item) -> std::string const& { return _item->name(); }
 	}, m_item);
 }
 
@@ -271,7 +271,7 @@ ContractDefinition const& OverrideProxy::contract() const
 	}, m_item);
 }
 
-string const& OverrideProxy::contractName() const
+std::string const& OverrideProxy::contractName() const
 {
 	return contract().name();
 }
@@ -312,12 +312,21 @@ Token OverrideProxy::functionKind() const
 	}, m_item);
 }
 
-FunctionType const* OverrideProxy::functionType() const
+FunctionType const* OverrideProxy::externalFunctionType() const
 {
 	return std::visit(GenericVisitor{
 		[&](FunctionDefinition const* _item) { return FunctionType(*_item).asExternallyCallableFunction(false); },
 		[&](VariableDeclaration const* _item) { return FunctionType(*_item).asExternallyCallableFunction(false); },
 		[&](ModifierDefinition const*) -> FunctionType const* { solAssert(false, "Requested function type of modifier."); return nullptr; }
+	}, m_item);
+}
+
+FunctionType const* OverrideProxy::originalFunctionType() const
+{
+	return std::visit(GenericVisitor{
+		[&](FunctionDefinition const* _item) { return TypeProvider::function(*_item); },
+		[&](VariableDeclaration const*) -> FunctionType const* { solAssert(false, "Requested specific function type of variable."); return nullptr; },
+		[&](ModifierDefinition const*) -> FunctionType const* { solAssert(false, "Requested specific function type of modifier."); return nullptr; }
 	}, m_item);
 }
 
@@ -347,7 +356,7 @@ SourceLocation const& OverrideProxy::location() const
 	}, m_item);
 }
 
-string OverrideProxy::astNodeName() const
+std::string OverrideProxy::astNodeName() const
 {
 	return std::visit(GenericVisitor{
 		[&](FunctionDefinition const*) { return "function"; },
@@ -356,7 +365,7 @@ string OverrideProxy::astNodeName() const
 	}, m_item);
 }
 
-string OverrideProxy::astNodeNameCapitalized() const
+std::string OverrideProxy::astNodeNameCapitalized() const
 {
 	return std::visit(GenericVisitor{
 		[&](FunctionDefinition const*) { return "Function"; },
@@ -365,7 +374,7 @@ string OverrideProxy::astNodeNameCapitalized() const
 	}, m_item);
 }
 
-string OverrideProxy::distinguishingProperty() const
+std::string OverrideProxy::distinguishingProperty() const
 {
 	return std::visit(GenericVisitor{
 		[&](FunctionDefinition const*) { return "name and parameter types"; },
@@ -408,11 +417,11 @@ OverrideProxy::OverrideComparator const& OverrideProxy::overrideComparator() con
 {
 	if (!m_comparator)
 	{
-		m_comparator = make_shared<OverrideComparator>(std::visit(GenericVisitor{
+		m_comparator = std::make_shared<OverrideComparator>(std::visit(GenericVisitor{
 			[&](FunctionDefinition const* _function)
 			{
-				vector<string> paramTypes;
-				for (Type const* t: functionType()->parameterTypes())
+				std::vector<std::string> paramTypes;
+				for (Type const* t: externalFunctionType()->parameterTypes())
 					paramTypes.emplace_back(t->richIdentifier());
 				return OverrideComparator{
 					_function->name(),
@@ -422,8 +431,8 @@ OverrideProxy::OverrideComparator const& OverrideProxy::overrideComparator() con
 			},
 			[&](VariableDeclaration const* _var)
 			{
-				vector<string> paramTypes;
-				for (Type const* t: functionType()->parameterTypes())
+				std::vector<std::string> paramTypes;
+				for (Type const* t: externalFunctionType()->parameterTypes())
 					paramTypes.emplace_back(t->richIdentifier());
 				return OverrideComparator{
 					_var->name(),
@@ -518,7 +527,7 @@ void OverrideChecker::checkOverride(OverrideProxy const& _overriding, OverridePr
 			"Override changes modifier signature."
 		);
 
-	if (!_overriding.overrides())
+	if (!_overriding.overrides() && !(_super.isFunction() && _super.contract().isInterface()))
 		overrideError(
 			_overriding,
 			_super,
@@ -573,21 +582,67 @@ void OverrideChecker::checkOverride(OverrideProxy const& _overriding, OverridePr
 			);
 	}
 
+	if (_overriding.unimplemented() && !_super.unimplemented())
+	{
+		solAssert(!_overriding.isVariable() || !_overriding.unimplemented(), "");
+		overrideError(
+			_overriding,
+			_super,
+			4593_error,
+			"Overriding an implemented " + _super.astNodeName() +
+			" with an unimplemented " + _overriding.astNodeName() +
+			" is not allowed."
+		);
+	}
+
 	if (_super.isFunction())
 	{
-		FunctionType const* functionType = _overriding.functionType();
-		FunctionType const* superType = _super.functionType();
+		FunctionType const* functionType = _overriding.externalFunctionType();
+		FunctionType const* superType = _super.externalFunctionType();
 
+		bool returnTypesDifferAlready = false;
 		if (_overriding.functionKind() != Token::Fallback)
 		{
 			solAssert(functionType->hasEqualParameterTypes(*superType), "Override doesn't have equal parameters!");
 
 			if (!functionType->hasEqualReturnTypes(*superType))
+			{
+				returnTypesDifferAlready = true;
 				overrideError(
 					_overriding,
 					_super,
 					4822_error,
 					"Overriding " + _overriding.astNodeName() + " return types differ.",
+					"Overridden " + _overriding.astNodeName() + " is here:"
+				);
+			}
+		}
+
+		// The override proxy considers calldata and memory the same data location.
+		// Here we do a more specific check:
+		// Data locations of parameters and return variables have to match
+		// unless we have a public function overriding an external one.
+		if (
+			_overriding.isFunction() &&
+			!returnTypesDifferAlready &&
+			_super.visibility() != Visibility::External &&
+			_overriding.functionKind() != Token::Fallback
+		)
+		{
+			if (!_overriding.originalFunctionType()->hasEqualParameterTypes(*_super.originalFunctionType()))
+				overrideError(
+					_overriding,
+					_super,
+					7723_error,
+					"Data locations of parameters have to be the same when overriding non-external functions, but they differ.",
+					"Overridden " + _overriding.astNodeName() + " is here:"
+				);
+			if (!_overriding.originalFunctionType()->hasEqualReturnTypes(*_super.originalFunctionType()))
+				overrideError(
+					_overriding,
+					_super,
+					1443_error,
+					"Data locations of return variables have to be the same when overriding non-external functions, but they differ.",
 					"Overridden " + _overriding.astNodeName() + " is here:"
 				);
 		}
@@ -613,34 +668,26 @@ void OverrideChecker::checkOverride(OverrideProxy const& _overriding, OverridePr
 				stateMutabilityToString(_overriding.stateMutability()) +
 				"\"."
 			);
-
-		if (_overriding.unimplemented() && !_super.unimplemented())
-			overrideError(
-				_overriding,
-				_super,
-				4593_error,
-				"Overriding an implemented function with an unimplemented function is not allowed."
-			);
 	}
 }
 
 void OverrideChecker::overrideListError(
 	OverrideProxy const& _item,
-	set<ContractDefinition const*, CompareByID> _secondary,
+	std::set<ContractDefinition const*, CompareByID> _secondary,
 	ErrorId _error,
-	string const& _message1,
-	string const& _message2
+	std::string const& _message1,
+	std::string const& _message2
 )
 {
 	// Using a set rather than a vector so the order is always the same
-	set<string> names;
+	std::set<std::string> names;
 	SecondarySourceLocation ssl;
 	for (Declaration const* c: _secondary)
 	{
 		ssl.append("This contract: ", c->location());
 		names.insert("\"" + c->name() + "\"");
 	}
-	string contractSingularPlural = "contract ";
+	std::string contractSingularPlural = "contract ";
 	if (_secondary.size() > 1)
 		contractSingularPlural = "contracts ";
 
@@ -656,23 +703,21 @@ void OverrideChecker::overrideListError(
 	);
 }
 
-void OverrideChecker::overrideError(Declaration const& _overriding, Declaration const& _super, ErrorId _error, string const& _message, string const& _secondaryMsg)
+void OverrideChecker::overrideError(
+	OverrideProxy const& _overriding,
+	OverrideProxy const& _super,
+	ErrorId _error,
+	std::string const& _message,
+	std::optional<std::string> const& _secondaryMsg
+)
 {
 	m_errorReporter.typeError(
 		_error,
 		_overriding.location(),
-		SecondarySourceLocation().append(_secondaryMsg, _super.location()),
-		_message
-	);
-}
-
-
-void OverrideChecker::overrideError(OverrideProxy const& _overriding, OverrideProxy const& _super, ErrorId _error, string const& _message, string const& _secondaryMsg)
-{
-	m_errorReporter.typeError(
-		_error,
-		_overriding.location(),
-		SecondarySourceLocation().append(_secondaryMsg, _super.location()),
+		SecondarySourceLocation().append(
+			_secondaryMsg.value_or("Overridden " + _super.astNodeName() + " is here:"),
+			_super.location()
+		),
 		_message
 	);
 }
@@ -720,7 +765,7 @@ void OverrideChecker::checkAmbiguousOverrides(ContractDefinition const& _contrac
 	}
 }
 
-void OverrideChecker::checkAmbiguousOverridesInternal(set<OverrideProxy> _baseCallables, SourceLocation const& _location) const
+void OverrideChecker::checkAmbiguousOverridesInternal(std::set<OverrideProxy> _baseCallables, SourceLocation const& _location) const
 {
 	if (_baseCallables.size() <= 1)
 		return;
@@ -753,20 +798,20 @@ void OverrideChecker::checkAmbiguousOverridesInternal(set<OverrideProxy> _baseCa
 	for (OverrideProxy const& baseFunction: _baseCallables)
 		ssl.append("Definition in \"" + baseFunction.contractName() + "\": ", baseFunction.location());
 
-	string callableName = _baseCallables.begin()->astNodeName();
+	std::string callableName = _baseCallables.begin()->astNodeName();
 	if (_baseCallables.begin()->isVariable())
 		callableName = "function";
-	string distinguishigProperty = _baseCallables.begin()->distinguishingProperty();
+	std::string distinguishingProperty = _baseCallables.begin()->distinguishingProperty();
 
 	bool foundVariable = false;
 	for (auto const& base: _baseCallables)
 		if (base.isVariable())
 			foundVariable = true;
 
-	string message =
+	std::string message =
 		"Derived contract must override " + callableName + " \"" +
 		_baseCallables.begin()->name() +
-		"\". Two or more base classes define " + callableName + " with same " + distinguishigProperty + ".";
+		"\". Two or more base classes define " + callableName + " with same " + distinguishingProperty + ".";
 
 	if (foundVariable)
 		message +=
@@ -776,11 +821,11 @@ void OverrideChecker::checkAmbiguousOverridesInternal(set<OverrideProxy> _baseCa
 	m_errorReporter.typeError(6480_error, _location, ssl, message);
 }
 
-set<ContractDefinition const*, OverrideChecker::CompareByID> OverrideChecker::resolveOverrideList(OverrideSpecifier const& _overrides) const
+std::set<ContractDefinition const*, OverrideChecker::CompareByID> OverrideChecker::resolveOverrideList(OverrideSpecifier const& _overrides) const
 {
-	set<ContractDefinition const*, CompareByID> resolved;
+	std::set<ContractDefinition const*, CompareByID> resolved;
 
-	for (ASTPointer<UserDefinedTypeName> const& override: _overrides.overrides())
+	for (ASTPointer<IdentifierPath> const& override: _overrides.overrides())
 	{
 		Declaration const* decl  = override->annotation().referencedDeclaration;
 		solAssert(decl, "Expected declaration to be resolved.");
@@ -796,7 +841,7 @@ set<ContractDefinition const*, OverrideChecker::CompareByID> OverrideChecker::re
 
 void OverrideChecker::checkOverrideList(OverrideProxy _item, OverrideProxyBySignatureMultiSet const& _inherited)
 {
-	set<ContractDefinition const*, CompareByID> specifiedContracts =
+	std::set<ContractDefinition const*, CompareByID> specifiedContracts =
 		_item.overrides() ?
 		resolveOverrideList(*_item.overrides()) :
 		decltype(specifiedContracts){};
@@ -805,7 +850,7 @@ void OverrideChecker::checkOverrideList(OverrideProxy _item, OverrideProxyBySign
 	if (_item.overrides() && specifiedContracts.size() != _item.overrides()->overrides().size())
 	{
 		// Sort by contract id to find duplicate for error reporting
-		vector<ASTPointer<UserDefinedTypeName>> list =
+		std::vector<ASTPointer<IdentifierPath>> list =
 			sortByContract(_item.overrides()->overrides());
 
 		// Find duplicates and output error
@@ -825,7 +870,7 @@ void OverrideChecker::checkOverrideList(OverrideProxy _item, OverrideProxyBySign
 					list[i]->location(),
 					ssl,
 					"Duplicate contract \"" +
-					joinHumanReadable(list[i]->namePath(), ".") +
+					joinHumanReadable(list[i]->path(), ".") +
 					"\" found in override list of \"" +
 					_item.name() +
 					"\"."
@@ -834,7 +879,7 @@ void OverrideChecker::checkOverrideList(OverrideProxy _item, OverrideProxyBySign
 		}
 	}
 
-	set<ContractDefinition const*, CompareByID> expectedContracts;
+	std::set<ContractDefinition const*, CompareByID> expectedContracts;
 
 	// Build list of expected contracts
 	for (auto [begin, end] = _inherited.equal_range(_item); begin != end; begin++)
@@ -852,7 +897,7 @@ void OverrideChecker::checkOverrideList(OverrideProxy _item, OverrideProxyBySign
 			_item.astNodeNameCapitalized() + " has override specified but does not override anything."
 		);
 
-	set<ContractDefinition const*, CompareByID> missingContracts;
+	std::set<ContractDefinition const*, CompareByID> missingContracts;
 	// If we expect only one contract, no contract needs to be specified
 	if (expectedContracts.size() > 1)
 		missingContracts = expectedContracts - specifiedContracts;
@@ -885,7 +930,7 @@ OverrideChecker::OverrideProxyBySignatureMultiSet const& OverrideChecker::inheri
 
 		for (auto const* base: resolveDirectBaseContracts(_contract))
 		{
-			set<OverrideProxy, OverrideProxy::CompareBySignature> functionsInBase;
+			std::set<OverrideProxy, OverrideProxy::CompareBySignature> functionsInBase;
 			for (FunctionDefinition const* fun: base->definedFunctions())
 				if (!fun->isConstructor())
 					functionsInBase.emplace(OverrideProxy{fun});
@@ -893,10 +938,11 @@ OverrideChecker::OverrideProxyBySignatureMultiSet const& OverrideChecker::inheri
 				if (var->isPublic())
 					functionsInBase.emplace(OverrideProxy{var});
 
-			for (OverrideProxy const& func: inheritedFunctions(*base))
-				functionsInBase.insert(func);
-
 			result += functionsInBase;
+
+			for (OverrideProxy const& func: inheritedFunctions(*base))
+				if (!functionsInBase.count(func))
+					result.insert(func);
 		}
 
 		m_inheritedFunctions[&_contract] = result;
@@ -913,7 +959,7 @@ OverrideChecker::OverrideProxyBySignatureMultiSet const& OverrideChecker::inheri
 
 		for (auto const* base: resolveDirectBaseContracts(_contract))
 		{
-			set<OverrideProxy, OverrideProxy::CompareBySignature> modifiersInBase;
+			std::set<OverrideProxy, OverrideProxy::CompareBySignature> modifiersInBase;
 			for (ModifierDefinition const* mod: base->functionModifiers())
 				modifiersInBase.emplace(OverrideProxy{mod});
 

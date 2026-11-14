@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract C
 {
 	bool b;
@@ -15,9 +13,12 @@ contract C
 		if (g(false) || b) {}
 	}
 }
+// ====
+// SMTEngine: all
 // ----
-// Warning 6838: (156-179): BMC: Condition is always true.
-// Warning 6838: (190-213): BMC: Condition is always true.
-// Warning 6838: (224-243): BMC: Condition is always true.
-// Warning 6838: (254-277): BMC: Condition is always true.
-// Warning 6838: (288-301): BMC: Condition is always false.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.
+// Warning 6838: (123-146): BMC: Condition is always true.
+// Warning 6838: (157-180): BMC: Condition is always true.
+// Warning 6838: (191-210): BMC: Condition is always true.
+// Warning 6838: (221-244): BMC: Condition is always true.
+// Warning 6838: (255-268): BMC: Condition is always false.

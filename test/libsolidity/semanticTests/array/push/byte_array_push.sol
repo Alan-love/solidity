@@ -13,8 +13,5 @@ contract c {
         if (l != 0x03) return true;
     }
 }
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // test() -> false

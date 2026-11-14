@@ -29,10 +29,13 @@
 #include <libsolidity/codegen/CompilerUtils.h>
 #include <libsolidity/codegen/LValue.h>
 
+#include <libsolutil/FunctionSelector.h>
+#include <libsolutil/Whiskers.h>
+#include <libsolutil/StackTooDeepString.h>
+
 #include <libevmasm/Instruction.h>
 #include <liblangutil/Exceptions.h>
 
-using namespace std;
 using namespace solidity;
 using namespace solidity::evmasm;
 using namespace solidity::frontend;
@@ -43,269 +46,65 @@ void ArrayUtils::copyArrayToStorage(ArrayType const& _targetType, ArrayType cons
 	// this copies source to target and also clears target if it was larger
 	// need to leave "target_ref target_byte_off" on the stack at the end
 
-	// stack layout: [source_ref] [source length] target_ref (top)
+	// stack layout: source_ref [source length] target_ref (top)
 	solAssert(_targetType.location() == DataLocation::Storage, "");
-
-	TypePointer uint256 = TypeProvider::uint256();
-	TypePointer targetBaseType = _targetType.isByteArray() ? uint256 : _targetType.baseType();
-	TypePointer sourceBaseType = _sourceType.isByteArray() ? uint256 : _sourceType.baseType();
 
 	// TODO unroll loop for small sizes
 
-	bool sourceIsStorage = _sourceType.location() == DataLocation::Storage;
 	bool fromCalldata = _sourceType.location() == DataLocation::CallData;
-	bool directCopy = sourceIsStorage && sourceBaseType->isValueType() && *sourceBaseType == *targetBaseType;
-	bool haveByteOffsetSource = !directCopy && sourceIsStorage && sourceBaseType->storageBytes() <= 16;
-	bool haveByteOffsetTarget = !directCopy && targetBaseType->storageBytes() <= 16;
-	unsigned byteOffsetSize = (haveByteOffsetSource ? 1u : 0u) + (haveByteOffsetTarget ? 1u : 0u);
+	bool haveSourceLengthOnStack = fromCalldata && _sourceType.isDynamicallySized();
 
-	// stack: source_ref [source_length] target_ref
-	// store target_ref
 	for (unsigned i = _sourceType.sizeOnStack(); i > 0; --i)
 		m_context << swapInstruction(i);
 	// stack: target_ref source_ref [source_length]
-	// stack: target_ref source_ref [source_length]
-	// retrieve source length
-	if (_sourceType.location() != DataLocation::CallData || !_sourceType.isDynamicallySized())
-		retrieveLength(_sourceType); // otherwise, length is already there
-	if (_sourceType.location() == DataLocation::Memory && _sourceType.isDynamicallySized())
+
+	if (_sourceType.baseType()->category() == Type::Category::Array)
 	{
-		// increment source pointer to point to data
-		m_context << Instruction::SWAP1 << u256(0x20);
-		m_context << Instruction::ADD << Instruction::SWAP1;
+		// TODO: This limitation can now be removed since we use Yul utility functions that handle nested arrays correctly.
+		// The old inline assembly implementation couldn't handle nested calldata dynamic arrays, but the Yul functions
+		// support them through recursive calls. We keep this check temporarily for backward compatibility.
+		auto const& sourceBaseArrayType = dynamic_cast<ArrayType const&>(*_sourceType.baseType());
+		solUnimplementedAssert(
+			!fromCalldata ||
+			!_sourceType.isDynamicallyEncoded() ||
+			!sourceBaseArrayType.isDynamicallySized(),
+			"Copying nested calldata dynamic arrays to storage is not implemented in the old code generator."
+		);
+	}
+	else
+	{
+		// TODO: This limitation can now be removed since we use Yul utility functions that handle non-value types correctly.
+		// The old inline assembly implementation couldn't handle copying arrays of non-value types from memory or calldata to storage,
+		// but the Yul functions support them. We keep this check temporarily for backward compatibility.
+		bool fromMemoryOrCalldata = _sourceType.location() == DataLocation::Memory || _sourceType.location() == DataLocation::CallData;
+		solUnimplementedAssert(
+			_sourceType.baseType()->isValueType() || !fromMemoryOrCalldata,
+			"Copying of type " + _sourceType.toString(false) + " to storage is not supported in legacy (only supported by the IR pipeline). " +
+			"Hint: try compiling with `--via-ir` (CLI) or the equivalent `viaIR: true` (Standard JSON)."
+		);
 	}
 
-	// stack: target_ref source_ref source_length
-	TypePointer targetType = &_targetType;
-	TypePointer sourceType = &_sourceType;
-	m_context.callLowLevelFunction(
-		"$copyArrayToStorage_" + sourceType->identifier() + "_to_" + targetType->identifier(),
-		3,
-		1,
-		[=](CompilerContext& _context)
-		{
-			ArrayUtils utils(_context);
-			ArrayType const& _sourceType = dynamic_cast<ArrayType const&>(*sourceType);
-			ArrayType const& _targetType = dynamic_cast<ArrayType const&>(*targetType);
-			// stack: target_ref source_ref source_length
-			_context << Instruction::DUP3;
-			// stack: target_ref source_ref source_length target_ref
-			utils.retrieveLength(_targetType);
-			// stack: target_ref source_ref source_length target_ref target_length
-			if (_targetType.isDynamicallySized())
-				// store new target length
-				if (!_targetType.isByteArray())
-					// Otherwise, length will be stored below.
-					_context << Instruction::DUP3 << Instruction::DUP3 << Instruction::SSTORE;
-			if (sourceBaseType->category() == Type::Category::Mapping)
-			{
-				solAssert(targetBaseType->category() == Type::Category::Mapping, "");
-				solAssert(_sourceType.location() == DataLocation::Storage, "");
-				// nothing to copy
-				_context
-					<< Instruction::POP << Instruction::POP
-					<< Instruction::POP << Instruction::POP;
-				return;
-			}
-			// stack: target_ref source_ref source_length target_ref target_length
-			// compute hashes (data positions)
-			_context << Instruction::SWAP1;
-			if (_targetType.isDynamicallySized())
-				CompilerUtils(_context).computeHashStatic();
-			// stack: target_ref source_ref source_length target_length target_data_pos
-			_context << Instruction::SWAP1;
-			utils.convertLengthToSize(_targetType);
-			_context << Instruction::DUP2 << Instruction::ADD;
-			// stack: target_ref source_ref source_length target_data_pos target_data_end
-			_context << Instruction::SWAP3;
-			// stack: target_ref target_data_end source_length target_data_pos source_ref
+	if (haveSourceLengthOnStack)
+	{
+		// stack: target_ref source_ref source_length
+		m_context << Instruction::SWAP1;
+		// stack: target_ref source_length source_ref
+		m_context << Instruction::DUP3;
+		// stack: target_ref source_length source_ref target_ref
+	}
+	else
+	{
+		// stack: target_ref source_ref
+		m_context << Instruction::DUP2;
+		// stack: target_ref source_ref target_ref
+	}
 
-			evmasm::AssemblyItem copyLoopEndWithoutByteOffset = _context.newTag();
-
-			// special case for short byte arrays: Store them together with their length.
-			if (_targetType.isByteArray())
-			{
-				// stack: target_ref target_data_end source_length target_data_pos source_ref
-				_context << Instruction::DUP3;
-				evmasm::AssemblyItem nonEmptyByteArray = _context.appendConditionalJump();
-				// Empty source, just zero out the main slot.
-				_context << u256(0) << Instruction::DUP6 << Instruction::SSTORE;
-				_context.appendJumpTo(copyLoopEndWithoutByteOffset);
-
-				_context << nonEmptyByteArray;
-				// Non-empty source.
-				// stack: target_ref target_data_end source_length target_data_pos source_ref
-				_context << Instruction::DUP3 << u256(31) << Instruction::LT;
-				evmasm::AssemblyItem longByteArray = _context.appendConditionalJump();
-				// store the short byte array
-				solAssert(_sourceType.isByteArray(), "");
-				if (_sourceType.location() == DataLocation::Storage)
-				{
-					// just copy the slot, it contains length and data
-					_context << Instruction::DUP1 << Instruction::SLOAD;
-					_context << Instruction::DUP6 << Instruction::SSTORE;
-				}
-				else
-				{
-					_context << Instruction::DUP1;
-					CompilerUtils(_context).loadFromMemoryDynamic(*sourceBaseType, fromCalldata, true, false);
-					// stack: target_ref target_data_end source_length target_data_pos source_ref value
-					// clear the lower-order byte - which will hold the length
-					_context << u256(0xff) << Instruction::NOT << Instruction::AND;
-					// fetch the length and shift it left by one
-					_context << Instruction::DUP4 << Instruction::DUP1 << Instruction::ADD;
-					// combine value and length and store them
-					_context << Instruction::OR << Instruction::DUP6 << Instruction::SSTORE;
-				}
-				// end of special case, jump right into cleaning target data area
-				_context.appendJumpTo(copyLoopEndWithoutByteOffset);
-				_context << longByteArray;
-				// Store length (2*length+1)
-				_context << Instruction::DUP3 << Instruction::DUP1 << Instruction::ADD;
-				_context << u256(1) << Instruction::ADD;
-				_context << Instruction::DUP6 << Instruction::SSTORE;
-			}
-
-			// skip copying if source length is zero
-			_context << Instruction::DUP3 << Instruction::ISZERO;
-			_context.appendConditionalJumpTo(copyLoopEndWithoutByteOffset);
-
-			if (_sourceType.location() == DataLocation::Storage && _sourceType.isDynamicallySized())
-				CompilerUtils(_context).computeHashStatic();
-			// stack: target_ref target_data_end source_length target_data_pos source_data_pos
-			_context << Instruction::SWAP2;
-			utils.convertLengthToSize(_sourceType);
-			_context << Instruction::DUP3 << Instruction::ADD;
-			// stack: target_ref target_data_end source_data_pos target_data_pos source_data_end
-			if (haveByteOffsetTarget)
-				_context << u256(0);
-			if (haveByteOffsetSource)
-				_context << u256(0);
-			// stack: target_ref target_data_end source_data_pos target_data_pos source_data_end [target_byte_offset] [source_byte_offset]
-			evmasm::AssemblyItem copyLoopStart = _context.newTag();
-			_context << copyLoopStart;
-			// check for loop condition
-			_context
-				<< dupInstruction(3 + byteOffsetSize) << dupInstruction(2 + byteOffsetSize)
-				<< Instruction::GT << Instruction::ISZERO;
-			evmasm::AssemblyItem copyLoopEnd = _context.appendConditionalJump();
-			// stack: target_ref target_data_end source_data_pos target_data_pos source_data_end [target_byte_offset] [source_byte_offset]
-			// copy
-			if (sourceBaseType->category() == Type::Category::Array)
-			{
-				solAssert(byteOffsetSize == 0, "Byte offset for array as base type.");
-				auto const& sourceBaseArrayType = dynamic_cast<ArrayType const&>(*sourceBaseType);
-
-				solUnimplementedAssert(
-					_sourceType.location() != DataLocation::CallData ||
-					!_sourceType.isDynamicallyEncoded() ||
-					!sourceBaseArrayType.isDynamicallySized(),
-					"Copying nested calldata dynamic arrays to storage is not implemented in the old code generator."
-				);
-				_context << Instruction::DUP3;
-				if (sourceBaseArrayType.location() == DataLocation::Memory)
-					_context << Instruction::MLOAD;
-				_context << Instruction::DUP3;
-				utils.copyArrayToStorage(dynamic_cast<ArrayType const&>(*targetBaseType), sourceBaseArrayType);
-				_context << Instruction::POP;
-			}
-			else if (directCopy)
-			{
-				solAssert(byteOffsetSize == 0, "Byte offset for direct copy.");
-				_context
-					<< Instruction::DUP3 << Instruction::SLOAD
-					<< Instruction::DUP3 << Instruction::SSTORE;
-			}
-			else
-			{
-				// Note that we have to copy each element on its own in case conversion is involved.
-				// We might copy too much if there is padding at the last element, but this way end
-				// checking is easier.
-				// stack: target_ref target_data_end source_data_pos target_data_pos source_data_end [target_byte_offset] [source_byte_offset]
-				_context << dupInstruction(3 + byteOffsetSize);
-				if (_sourceType.location() == DataLocation::Storage)
-				{
-					if (haveByteOffsetSource)
-						_context << Instruction::DUP2;
-					else
-						_context << u256(0);
-					StorageItem(_context, *sourceBaseType).retrieveValue(SourceLocation(), true);
-				}
-				else if (sourceBaseType->isValueType())
-					CompilerUtils(_context).loadFromMemoryDynamic(*sourceBaseType, fromCalldata, true, false);
-				else
-					solUnimplemented("Copying of type " + _sourceType.toString(false) + " to storage not yet supported.");
-				// stack: target_ref target_data_end source_data_pos target_data_pos source_data_end [target_byte_offset] [source_byte_offset] <source_value>...
-				assertThrow(
-					2 + byteOffsetSize + sourceBaseType->sizeOnStack() <= 16,
-					StackTooDeepError,
-					"Stack too deep, try removing local variables."
-				);
-				// fetch target storage reference
-				_context << dupInstruction(2 + byteOffsetSize + sourceBaseType->sizeOnStack());
-				if (haveByteOffsetTarget)
-					_context << dupInstruction(1 + byteOffsetSize + sourceBaseType->sizeOnStack());
-				else
-					_context << u256(0);
-				StorageItem(_context, *targetBaseType).storeValue(*sourceBaseType, SourceLocation(), true);
-			}
-			// stack: target_ref target_data_end source_data_pos target_data_pos source_data_end [target_byte_offset] [source_byte_offset]
-			// increment source
-			if (haveByteOffsetSource)
-				utils.incrementByteOffset(sourceBaseType->storageBytes(), 1, haveByteOffsetTarget ? 5 : 4);
-			else
-			{
-				_context << swapInstruction(2 + byteOffsetSize);
-				if (sourceIsStorage)
-					_context << sourceBaseType->storageSize();
-				else if (_sourceType.location() == DataLocation::Memory)
-					_context << sourceBaseType->memoryHeadSize();
-				else
-					_context << sourceBaseType->calldataHeadSize();
-				_context
-					<< Instruction::ADD
-					<< swapInstruction(2 + byteOffsetSize);
-			}
-			// increment target
-			if (haveByteOffsetTarget)
-				utils.incrementByteOffset(targetBaseType->storageBytes(), byteOffsetSize, byteOffsetSize + 2);
-			else
-				_context
-					<< swapInstruction(1 + byteOffsetSize)
-					<< targetBaseType->storageSize()
-					<< Instruction::ADD
-					<< swapInstruction(1 + byteOffsetSize);
-			_context.appendJumpTo(copyLoopStart);
-			_context << copyLoopEnd;
-			if (haveByteOffsetTarget)
-			{
-				// clear elements that might be left over in the current slot in target
-				// stack: target_ref target_data_end source_data_pos target_data_pos source_data_end target_byte_offset [source_byte_offset]
-				_context << dupInstruction(byteOffsetSize) << Instruction::ISZERO;
-				evmasm::AssemblyItem copyCleanupLoopEnd = _context.appendConditionalJump();
-				_context << dupInstruction(2 + byteOffsetSize) << dupInstruction(1 + byteOffsetSize);
-				StorageItem(_context, *targetBaseType).setToZero(SourceLocation(), true);
-				utils.incrementByteOffset(targetBaseType->storageBytes(), byteOffsetSize, byteOffsetSize + 2);
-				_context.appendJumpTo(copyLoopEnd);
-
-				_context << copyCleanupLoopEnd;
-				_context << Instruction::POP; // might pop the source, but then target is popped next
-			}
-			if (haveByteOffsetSource)
-				_context << Instruction::POP;
-			_context << copyLoopEndWithoutByteOffset;
-
-			// zero-out leftovers in target
-			// stack: target_ref target_data_end source_data_pos target_data_pos_updated source_data_end
-			_context << Instruction::POP << Instruction::SWAP1 << Instruction::POP;
-			// stack: target_ref target_data_end target_data_pos_updated
-			if (targetBaseType->storageBytes() < 32)
-				utils.clearStorageLoop(TypeProvider::uint256());
-			else
-				utils.clearStorageLoop(targetBaseType);
-			_context << Instruction::POP;
-		}
+	m_context.callYulFunction(
+		m_context.utilFunctions().copyArrayToStorageFunction(_sourceType, _targetType),
+		haveSourceLengthOnStack ? 3 : 2,
+		0
 	);
+	// stack: target_ref
 }
 
 void ArrayUtils::copyArrayToMemory(ArrayType const& _sourceType, bool _padToWordBoundaries) const
@@ -320,10 +119,10 @@ void ArrayUtils::copyArrayToMemory(ArrayType const& _sourceType, bool _padToWord
 	{
 		if (!_sourceType.isDynamicallySized())
 			m_context << _sourceType.length();
-		if (!_sourceType.isByteArray())
+		if (!_sourceType.isByteArrayOrString())
 			convertLengthToSize(_sourceType);
 
-		string routine = "calldatacopy(target, source, len)\n";
+		std::string routine = "calldatacopy(target, source, len)\n";
 		if (_padToWordBoundaries)
 			routine += R"(
 				// Set padding suffix to zero
@@ -372,14 +171,14 @@ void ArrayUtils::copyArrayToMemory(ArrayType const& _sourceType, bool _padToWord
 			m_context << Instruction::SWAP1 << u256(32) << Instruction::ADD;
 			m_context << Instruction::SWAP1;
 		}
-		if (!_sourceType.isByteArray())
+		if (!_sourceType.isByteArrayOrString())
 			convertLengthToSize(_sourceType);
 		// stack: <target> <source> <size>
 		m_context << Instruction::DUP1 << Instruction::DUP4 << Instruction::DUP4;
 		// We can resort to copying full 32 bytes only if
 		// - the length is known to be a multiple of 32 or
 		// - we will pad to full 32 bytes later anyway.
-		if (!_sourceType.isByteArray() || _padToWordBoundaries)
+		if (!_sourceType.isByteArrayOrString() || _padToWordBoundaries)
 			utils.memoryCopy32();
 		else
 			utils.memoryCopy();
@@ -387,7 +186,7 @@ void ArrayUtils::copyArrayToMemory(ArrayType const& _sourceType, bool _padToWord
 		m_context << Instruction::SWAP1 << Instruction::POP;
 		// stack: <target> <size>
 
-		bool paddingNeeded = _padToWordBoundaries && _sourceType.isByteArray();
+		bool paddingNeeded = _padToWordBoundaries && _sourceType.isByteArrayOrString();
 
 		if (paddingNeeded)
 		{
@@ -443,7 +242,7 @@ void ArrayUtils::copyArrayToMemory(ArrayType const& _sourceType, bool _padToWord
 		m_context << Instruction::DUP1 << Instruction::ISZERO;
 		evmasm::AssemblyItem loopEnd = m_context.appendConditionalJump();
 		// Special case for tightly-stored byte arrays
-		if (_sourceType.isByteArray())
+		if (_sourceType.isByteArrayOrString())
 		{
 			// stack here: memory_offset storage_offset length
 			m_context << Instruction::DUP1 << u256(31) << Instruction::LT;
@@ -479,14 +278,14 @@ void ArrayUtils::copyArrayToMemory(ArrayType const& _sourceType, bool _padToWord
 		}
 
 		// stack here: memory_end_offset storage_data_offset memory_offset
-		bool haveByteOffset = !_sourceType.isByteArray() && storageBytes <= 16;
+		bool haveByteOffset = !_sourceType.isByteArrayOrString() && storageBytes <= 16;
 		if (haveByteOffset)
 			m_context << u256(0) << Instruction::SWAP1;
 		// stack here: memory_end_offset storage_data_offset [storage_byte_offset] memory_offset
 		evmasm::AssemblyItem loopStart = m_context.newTag();
 		m_context << loopStart;
 		// load and store
-		if (_sourceType.isByteArray())
+		if (_sourceType.isByteArrayOrString())
 		{
 			// Packed both in storage and memory.
 			m_context << Instruction::DUP2 << Instruction::SLOAD;
@@ -525,16 +324,16 @@ void ArrayUtils::copyArrayToMemory(ArrayType const& _sourceType, bool _padToWord
 		// stack here: memory_end_offset storage_data_offset [storage_byte_offset] memory_offset
 		if (haveByteOffset)
 			m_context << Instruction::SWAP1 << Instruction::POP;
-		if (!_sourceType.isByteArray())
+		if (!_sourceType.isByteArrayOrString())
 		{
 			solAssert(_sourceType.calldataStride() % 32 == 0, "");
 			solAssert(_sourceType.memoryStride() % 32 == 0, "");
 		}
-		if (_padToWordBoundaries && _sourceType.isByteArray())
+		if (_padToWordBoundaries && _sourceType.isByteArrayOrString())
 		{
 			// memory_end_offset - start is the actual length (we want to compute the ceil of).
 			// memory_offset - start is its next multiple of 32, but it might be off by 32.
-			// so we compute: memory_end_offset += (memory_offset - memory_end_offest) & 31
+			// so we compute: memory_end_offset += (memory_offset - memory_end_offset) & 31
 			m_context << Instruction::DUP3 << Instruction::SWAP1 << Instruction::SUB;
 			m_context << u256(31) << Instruction::AND;
 			m_context << Instruction::DUP3 << Instruction::ADD;
@@ -546,7 +345,7 @@ void ArrayUtils::copyArrayToMemory(ArrayType const& _sourceType, bool _padToWord
 
 void ArrayUtils::clearArray(ArrayType const& _typeIn) const
 {
-	TypePointer type = &_typeIn;
+	Type const* type = &_typeIn;
 	m_context.callLowLevelFunction(
 		"$clearArray_" + _typeIn.identifier(),
 		2,
@@ -596,14 +395,13 @@ void ArrayUtils::clearArray(ArrayType const& _typeIn) const
 			}
 			else
 			{
-				_context << Instruction::DUP1 << _type.length();
+				_context << _type.length();
 				ArrayUtils(_context).convertLengthToSize(_type);
-				_context << Instruction::ADD << Instruction::SWAP1;
+				// stack: storage_ref slot_count
 				if (_type.baseType()->storageBytes() < 32)
 					ArrayUtils(_context).clearStorageLoop(TypeProvider::uint256());
 				else
 					ArrayUtils(_context).clearStorageLoop(_type.baseType());
-				_context << Instruction::POP;
 			}
 			solAssert(_context.stackHeight() == stackHeightStart - 2, "");
 		}
@@ -621,192 +419,41 @@ void ArrayUtils::clearDynamicArray(ArrayType const& _type) const
 	m_context << u256(0) << Instruction::DUP3 << Instruction::SSTORE;
 	// Special case: short byte arrays are stored togeher with their length
 	evmasm::AssemblyItem endTag = m_context.newTag();
-	if (_type.isByteArray())
+	if (_type.isByteArrayOrString())
 	{
 		// stack: ref old_length
 		m_context << Instruction::DUP1 << u256(31) << Instruction::LT;
 		evmasm::AssemblyItem longByteArray = m_context.appendConditionalJump();
-		m_context << Instruction::POP;
+		// Short byte array: no data slots to clear, just pop and exit
+		m_context << Instruction::POP << Instruction::POP;
 		m_context.appendJumpTo(endTag);
-		m_context.adjustStackOffset(1); // needed because of jump
+		m_context.adjustStackOffset(2); // the longByteArray path has 2 more items on stack
 		m_context << longByteArray;
 	}
 	// stack: ref old_length
 	convertLengthToSize(_type);
-	// compute data positions
+	// stack: ref slot_count
 	m_context << Instruction::SWAP1;
 	CompilerUtils(m_context).computeHashStatic();
-	// stack: len data_pos
-	m_context << Instruction::SWAP1 << Instruction::DUP2 << Instruction::ADD
-		<< Instruction::SWAP1;
-	// stack: data_pos_end data_pos
+	// stack: slot_count data_pos
+	m_context << Instruction::SWAP1;
+	// stack: data_pos slot_count
 	if (_type.storageStride() < 32)
 		clearStorageLoop(TypeProvider::uint256());
 	else
 		clearStorageLoop(_type.baseType());
 	// cleanup
 	m_context << endTag;
-	m_context << Instruction::POP;
-}
-
-void ArrayUtils::resizeDynamicArray(ArrayType const& _typeIn) const
-{
-	TypePointer type = &_typeIn;
-	m_context.callLowLevelFunction(
-		"$resizeDynamicArray_" + _typeIn.identifier(),
-		2,
-		0,
-		[type](CompilerContext& _context)
-		{
-			ArrayType const& _type = dynamic_cast<ArrayType const&>(*type);
-			solAssert(_type.location() == DataLocation::Storage, "");
-			solAssert(_type.isDynamicallySized(), "");
-			if (!_type.isByteArray() && _type.baseType()->storageBytes() < 32)
-				solAssert(_type.baseType()->isValueType(), "Invalid storage size for non-value type.");
-
-			unsigned stackHeightStart = _context.stackHeight();
-			evmasm::AssemblyItem resizeEnd = _context.newTag();
-
-			// stack: ref new_length
-			// fetch old length
-			ArrayUtils(_context).retrieveLength(_type, 1);
-			// stack: ref new_length old_length
-			solAssert(_context.stackHeight() - stackHeightStart == 3 - 2, "2");
-
-			// Special case for short byte arrays, they are stored together with their length
-			if (_type.isByteArray())
-			{
-				evmasm::AssemblyItem regularPath = _context.newTag();
-				// We start by a large case-distinction about the old and new length of the byte array.
-
-				_context << Instruction::DUP3 << Instruction::SLOAD;
-				// stack: ref new_length current_length ref_value
-
-				solAssert(_context.stackHeight() - stackHeightStart == 4 - 2, "3");
-				_context << Instruction::DUP2 << u256(31) << Instruction::LT;
-				evmasm::AssemblyItem currentIsLong = _context.appendConditionalJump();
-				_context << Instruction::DUP3 << u256(31) << Instruction::LT;
-				evmasm::AssemblyItem newIsLong = _context.appendConditionalJump();
-
-				// Here: short -> short
-
-				// Compute 1 << (256 - 8 * new_size)
-				evmasm::AssemblyItem shortToShort = _context.newTag();
-				_context << shortToShort;
-				_context << Instruction::DUP3 << u256(8) << Instruction::MUL;
-				_context << u256(0x100) << Instruction::SUB;
-				_context << u256(2) << Instruction::EXP;
-				// Divide and multiply by that value, clearing bits.
-				_context << Instruction::DUP1 << Instruction::SWAP2;
-				_context << Instruction::DIV << Instruction::MUL;
-				// Insert 2*length.
-				_context << Instruction::DUP3 << Instruction::DUP1 << Instruction::ADD;
-				_context << Instruction::OR;
-				// Store.
-				_context << Instruction::DUP4 << Instruction::SSTORE;
-				solAssert(_context.stackHeight() - stackHeightStart == 3 - 2, "3");
-				_context.appendJumpTo(resizeEnd);
-
-				_context.adjustStackOffset(1); // we have to do that because of the jumps
-				// Here: short -> long
-
-				_context << newIsLong;
-				// stack: ref new_length current_length ref_value
-				solAssert(_context.stackHeight() - stackHeightStart == 4 - 2, "3");
-				// Zero out lower-order byte.
-				_context << u256(0xff) << Instruction::NOT << Instruction::AND;
-				// Store at data location.
-				_context << Instruction::DUP4;
-				CompilerUtils(_context).computeHashStatic();
-				_context << Instruction::SSTORE;
-				// stack: ref new_length current_length
-				// Store new length: Compule 2*length + 1 and store it.
-				_context << Instruction::DUP2 << Instruction::DUP1 << Instruction::ADD;
-				_context << u256(1) << Instruction::ADD;
-				// stack: ref new_length current_length 2*new_length+1
-				_context << Instruction::DUP4 << Instruction::SSTORE;
-				solAssert(_context.stackHeight() - stackHeightStart == 3 - 2, "3");
-				_context.appendJumpTo(resizeEnd);
-
-				_context.adjustStackOffset(1); // we have to do that because of the jumps
-
-				_context << currentIsLong;
-				_context << Instruction::DUP3 << u256(31) << Instruction::LT;
-				_context.appendConditionalJumpTo(regularPath);
-
-				// Here: long -> short
-				// Read the first word of the data and store it on the stack. Clear the data location and
-				// then jump to the short -> short case.
-
-				// stack: ref new_length current_length ref_value
-				solAssert(_context.stackHeight() - stackHeightStart == 4 - 2, "3");
-				_context << Instruction::POP << Instruction::DUP3;
-				CompilerUtils(_context).computeHashStatic();
-				_context << Instruction::DUP1 << Instruction::SLOAD << Instruction::SWAP1;
-				// stack: ref new_length current_length first_word data_location
-				_context << Instruction::DUP3;
-				ArrayUtils(_context).convertLengthToSize(_type);
-				_context << Instruction::DUP2 << Instruction::ADD << Instruction::SWAP1;
-				// stack: ref new_length current_length first_word data_location_end data_location
-				ArrayUtils(_context).clearStorageLoop(TypeProvider::uint256());
-				_context << Instruction::POP;
-				// stack: ref new_length current_length first_word
-				solAssert(_context.stackHeight() - stackHeightStart == 4 - 2, "3");
-				_context.appendJumpTo(shortToShort);
-
-				_context << regularPath;
-				// stack: ref new_length current_length ref_value
-				_context << Instruction::POP;
-			}
-
-			// Change of length for a regular array (i.e. length at location, data at KECCAK256(location)).
-			// stack: ref new_length old_length
-			// store new length
-			_context << Instruction::DUP2;
-			if (_type.isByteArray())
-				// For a "long" byte array, store length as 2*length+1
-				_context << Instruction::DUP1 << Instruction::ADD << u256(1) << Instruction::ADD;
-			_context << Instruction::DUP4 << Instruction::SSTORE;
-			// skip if size is not reduced
-			_context << Instruction::DUP2 << Instruction::DUP2
-				<< Instruction::GT << Instruction::ISZERO;
-			_context.appendConditionalJumpTo(resizeEnd);
-
-			// size reduced, clear the end of the array
-			// stack: ref new_length old_length
-			ArrayUtils(_context).convertLengthToSize(_type);
-			_context << Instruction::DUP2;
-			ArrayUtils(_context).convertLengthToSize(_type);
-			// stack: ref new_length old_size new_size
-			// compute data positions
-			_context << Instruction::DUP4;
-			CompilerUtils(_context).computeHashStatic();
-			// stack: ref new_length old_size new_size data_pos
-			_context << Instruction::SWAP2 << Instruction::DUP3 << Instruction::ADD;
-			// stack: ref new_length data_pos new_size delete_end
-			_context << Instruction::SWAP2 << Instruction::ADD;
-			// stack: ref new_length delete_end delete_start
-			if (_type.storageStride() < 32)
-				ArrayUtils(_context).clearStorageLoop(TypeProvider::uint256());
-			else
-				ArrayUtils(_context).clearStorageLoop(_type.baseType());
-
-			_context << resizeEnd;
-			// cleanup
-			_context << Instruction::POP << Instruction::POP << Instruction::POP;
-			solAssert(_context.stackHeight() == stackHeightStart - 2, "");
-		}
-	);
 }
 
 void ArrayUtils::incrementDynamicArraySize(ArrayType const& _type) const
 {
 	solAssert(_type.location() == DataLocation::Storage, "");
 	solAssert(_type.isDynamicallySized(), "");
-	if (!_type.isByteArray() && _type.baseType()->storageBytes() < 32)
+	if (!_type.isByteArrayOrString() && _type.baseType()->storageBytes() < 32)
 		solAssert(_type.baseType()->isValueType(), "Invalid storage size for non-value type.");
 
-	if (_type.isByteArray())
+	if (_type.isByteArrayOrString())
 	{
 		// We almost always just add 2 (length of byte arrays is shifted left by one)
 		// except for the case where we transition from a short byte array
@@ -815,30 +462,25 @@ void ArrayUtils::incrementDynamicArraySize(ArrayType const& _type) const
 		// lowest-order byte (we actually use a mask with fewer bits) must
 		// be (31*2+0) = 62
 
+		m_context << Instruction::DUP1 << Instruction::SLOAD << Instruction::DUP1;
+		m_context.callYulFunction(m_context.utilFunctions().extractByteArrayLengthFunction(), 1, 1);
 		m_context.appendInlineAssembly(R"({
-			let data := sload(ref)
-			let shifted_length := and(data, 63)
 			// We have to copy if length is exactly 31, because that marks
 			// the transition between in-place and out-of-place storage.
-			switch shifted_length
-			case 62
+			switch length
+			case 31
 			{
 				mstore(0, ref)
 				let data_area := keccak256(0, 0x20)
 				sstore(data_area, and(data, not(0xff)))
-				// New length is 32, encoded as (32 * 2 + 1)
-				sstore(ref, 65)
-				// Replace ref variable by new length
-				ref := 32
+				// Set old length in new format (31 * 2 + 1)
+				data := 63
 			}
-			default
-			{
-				sstore(ref, add(data, 2))
-				// Replace ref variable by new length
-				if iszero(and(data, 1)) { data := shifted_length }
-				ref := add(div(data, 2), 1)
-			}
-		})", {"ref"});
+			sstore(ref, add(data, 2))
+			// return new length in ref
+			ref := add(length, 1)
+		})", {"ref", "data", "length"});
+		m_context << Instruction::POP << Instruction::POP;
 	}
 	else
 		m_context.appendInlineAssembly(R"({
@@ -852,29 +494,30 @@ void ArrayUtils::popStorageArrayElement(ArrayType const& _type) const
 {
 	solAssert(_type.location() == DataLocation::Storage, "");
 	solAssert(_type.isDynamicallySized(), "");
-	if (!_type.isByteArray() && _type.baseType()->storageBytes() < 32)
+	if (!_type.isByteArrayOrString() && _type.baseType()->storageBytes() < 32)
 		solAssert(_type.baseType()->isValueType(), "Invalid storage size for non-value type.");
 
-	if (_type.isByteArray())
+	if (_type.isByteArrayOrString())
 	{
-		m_context.appendInlineAssembly(R"({
-			let slot_value := sload(ref)
-			switch and(slot_value, 1)
+		m_context << Instruction::DUP1 << Instruction::SLOAD << Instruction::DUP1;
+		m_context.callYulFunction(m_context.utilFunctions().extractByteArrayLengthFunction(), 1, 1);
+		util::Whiskers code(R"({
+			if iszero(length) {
+				mstore(0, <panicSelector>)
+				mstore(4, <emptyArrayPop>)
+				revert(0, 0x24)
+			}
+			switch gt(length, 31)
 			case 0 {
 				// short byte array
-				let length := and(div(slot_value, 2), 0x1f)
-				if iszero(length) { invalid() }
-
 				// Zero-out the suffix including the least significant byte.
 				let mask := sub(exp(0x100, sub(33, length)), 1)
 				length := sub(length, 1)
 				slot_value := or(and(not(mask), slot_value), mul(length, 2))
-				sstore(ref, slot_value)
 			}
 			case 1 {
 				// long byte array
 				mstore(0, ref)
-				let length := div(slot_value, 2)
 				let slot := keccak256(0, 0x20)
 				switch length
 				case 32
@@ -882,7 +525,7 @@ void ArrayUtils::popStorageArrayElement(ArrayType const& _type) const
 					let data := sload(slot)
 					sstore(slot, 0)
 					data := and(data, not(0xff))
-					sstore(ref, or(data, 62))
+					slot_value := or(data, 62)
 				}
 				default
 				{
@@ -898,11 +541,14 @@ void ArrayUtils::popStorageArrayElement(ArrayType const& _type) const
 
 					// Reduce the length by 1
 					slot_value := sub(slot_value, 2)
-					sstore(ref, slot_value)
 				}
 			}
-		})", {"ref"});
-		m_context << Instruction::POP;
+			sstore(ref, slot_value)
+		})");
+		code("panicSelector", util::selectorFromSignatureU256("Panic(uint256)").str());
+		code("emptyArrayPop", std::to_string(unsigned(util::PanicCode::EmptyArrayPop)));
+		m_context.appendInlineAssembly(code.render(), {"ref", "slot_value", "length"});
+		m_context << Instruction::POP << Instruction::POP << Instruction::POP;
 	}
 	else
 	{
@@ -912,7 +558,7 @@ void ArrayUtils::popStorageArrayElement(ArrayType const& _type) const
 		m_context << Instruction::DUP1;
 		// stack: ArrayReference oldLength oldLength
 		m_context << Instruction::ISZERO;
-		m_context.appendConditionalInvalid();
+		m_context.appendConditionalPanic(util::PanicCode::EmptyArrayPop);
 
 		// Stack: ArrayReference oldLength
 		m_context << u256(1) << Instruction::SWAP1 << Instruction::SUB;
@@ -932,45 +578,47 @@ void ArrayUtils::popStorageArrayElement(ArrayType const& _type) const
 	}
 }
 
-void ArrayUtils::clearStorageLoop(TypePointer _type) const
+void ArrayUtils::clearStorageLoop(Type const* _type) const
 {
 	solAssert(_type->storageBytes() >= 32, "");
 	m_context.callLowLevelFunction(
 		"$clearStorageLoop_" + _type->identifier(),
 		2,
-		1,
+		0,
 		[_type](CompilerContext& _context)
 		{
 			unsigned stackHeightStart = _context.stackHeight();
 			if (_type->category() == Type::Category::Mapping)
 			{
-				_context << Instruction::POP;
+				_context << Instruction::POP << Instruction::POP;
 				return;
 			}
-			// stack: end_pos pos
-
+			// stack: start_pos slot_count
+			// Initialize loop counter i = 0
+			_context << u256(0);
+			// stack: start_pos slot_count i
 			evmasm::AssemblyItem loopStart = _context.appendJumpToNew();
 			_context << loopStart;
-			// check for loop condition
-			_context <<
-				Instruction::DUP1 <<
-				Instruction::DUP3 <<
-				Instruction::GT <<
-				Instruction::ISZERO;
+			// check for loop condition: !(slot_count > i) = (i >= slot_count)
+			_context << Instruction::DUP1 << Instruction::DUP3 << Instruction::GT << Instruction::ISZERO;
 			evmasm::AssemblyItem zeroLoopEnd = _context.newTag();
 			_context.appendConditionalJumpTo(zeroLoopEnd);
-			// delete
+			// stack: start_pos slot_count i
+			// compute storage position: start_pos + i
+			_context << Instruction::DUP3 << Instruction::DUP2 << Instruction::ADD;
+			// stack: start_pos slot_count i (start_pos+i)
+			// delete storage slot
 			_context << u256(0);
-			StorageItem(_context, *_type).setToZero(SourceLocation(), false);
-			_context << Instruction::POP;
-			// increment
+			StorageItem(_context, *_type).setToZero(SourceLocation(), /* _removeReference = */ true);
+			// stack: start_pos slot_count i
+			// increment counter: i += storageSize
 			_context << _type->storageSize() << Instruction::ADD;
 			_context.appendJumpTo(loopStart);
 			// cleanup
 			_context << zeroLoopEnd;
-			_context << Instruction::POP;
-
-			solAssert(_context.stackHeight() == stackHeightStart - 1, "");
+			// stack: start_pos slot_count i
+			_context << Instruction::POP << Instruction::POP << Instruction::POP;
+			solAssert(_context.stackHeight() == stackHeightStart - 2, "");
 		}
 	);
 }
@@ -997,7 +645,7 @@ void ArrayUtils::convertLengthToSize(ArrayType const& _arrayType, bool _pad) con
 	}
 	else
 	{
-		if (!_arrayType.isByteArray())
+		if (!_arrayType.isByteArrayOrString())
 		{
 			if (_arrayType.location() == DataLocation::Memory)
 				m_context << _arrayType.memoryStride();
@@ -1029,17 +677,11 @@ void ArrayUtils::retrieveLength(ArrayType const& _arrayType, unsigned _stackDept
 			break;
 		case DataLocation::Storage:
 			m_context << Instruction::SLOAD;
-			if (_arrayType.isByteArray())
-			{
-				// Retrieve length both for in-place strings and off-place strings:
-				// Computes (x & (0x100 * (ISZERO (x & 1)) - 1)) / 2
-				// i.e. for short strings (x & 1 == 0) it does (x & 0xff) / 2 and for long strings it
-				// computes (x & (-1)) / 2, which is equivalent to just x / 2.
-				m_context << u256(1) << Instruction::DUP2 << u256(1) << Instruction::AND;
-				m_context << Instruction::ISZERO << u256(0x100) << Instruction::MUL;
-				m_context << Instruction::SUB << Instruction::AND;
-				m_context << u256(2) << Instruction::SWAP1 << Instruction::DIV;
-			}
+			if (_arrayType.isByteArrayOrString())
+				m_context.callYulFunction(m_context.utilFunctions().extractByteArrayLengthFunction(), 1, 1);
+			break;
+		case DataLocation::Transient:
+			solUnimplemented("Transient data location is only supported for value types.");
 			break;
 		}
 	}
@@ -1058,7 +700,7 @@ void ArrayUtils::accessIndex(ArrayType const& _arrayType, bool _doBoundsCheck, b
 		// check out-of-bounds access
 		m_context << Instruction::DUP2 << Instruction::LT << Instruction::ISZERO;
 		// out-of-bounds access throws exception
-		m_context.appendConditionalInvalid();
+		m_context.appendConditionalPanic(util::PanicCode::ArrayOutOfBounds);
 	}
 	if (location == DataLocation::CallData && _arrayType.isDynamicallySized())
 		// remove length if present
@@ -1069,7 +711,7 @@ void ArrayUtils::accessIndex(ArrayType const& _arrayType, bool _doBoundsCheck, b
 	{
 	case DataLocation::Memory:
 		// stack: <base_ref> <index>
-		if (!_arrayType.isByteArray())
+		if (!_arrayType.isByteArrayOrString())
 			m_context << u256(_arrayType.memoryHeadSize()) << Instruction::MUL;
 		if (_arrayType.isDynamicallySized())
 			m_context << u256(32) << Instruction::ADD;
@@ -1078,7 +720,7 @@ void ArrayUtils::accessIndex(ArrayType const& _arrayType, bool _doBoundsCheck, b
 		m_context << Instruction::ADD;
 		break;
 	case DataLocation::CallData:
-		if (!_arrayType.isByteArray())
+		if (!_arrayType.isByteArrayOrString())
 		{
 			m_context << _arrayType.calldataStride();
 			m_context << Instruction::MUL;
@@ -1097,7 +739,7 @@ void ArrayUtils::accessIndex(ArrayType const& _arrayType, bool _doBoundsCheck, b
 		// stack: [<base_ref>] <index> <base_ref>
 
 		evmasm::AssemblyItem endTag = m_context.newTag();
-		if (_arrayType.isByteArray())
+		if (_arrayType.isByteArrayOrString())
 		{
 			// Special case of short byte arrays.
 			m_context << Instruction::SWAP1;
@@ -1138,6 +780,9 @@ void ArrayUtils::accessIndex(ArrayType const& _arrayType, bool _doBoundsCheck, b
 		m_context << endTag;
 		break;
 	}
+	case DataLocation::Transient:
+		solUnimplemented("Transient data location is only supported for value types.");
+		break;
 	}
 }
 
@@ -1160,7 +805,7 @@ void ArrayUtils::accessCallDataArrayElement(ArrayType const& _arrayType, bool _d
 		{
 			solAssert(_arrayType.baseType()->storageBytes() <= 32, "");
 			if (
-				!_arrayType.isByteArray() &&
+				!_arrayType.isByteArrayOrString() &&
 				_arrayType.baseType()->storageBytes() < 32 &&
 				m_context.useABICoderV2()
 			)
@@ -1172,7 +817,7 @@ void ArrayUtils::accessCallDataArrayElement(ArrayType const& _arrayType, bool _d
 				CompilerUtils(m_context).loadFromMemoryDynamic(
 					*_arrayType.baseType(),
 					true,
-					!_arrayType.isByteArray(),
+					!_arrayType.isByteArrayOrString(),
 					false
 				);
 		}

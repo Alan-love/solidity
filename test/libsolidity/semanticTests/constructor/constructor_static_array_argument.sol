@@ -7,11 +7,16 @@ contract C {
         b = _b;
     }
 }
-
-// ====
-// compileViaYul: also
 // ----
 // constructor(): 1, 2, 3, 4 ->
+// gas irOptimized: 148113
+// gas irOptimized code: 22800
+// gas legacy: 166201
+// gas legacy code: 60400
+// gas legacyOptimized: 149177
+// gas legacyOptimized code: 26200
+// gas ssaCFGOptimized: 147969
+// gas ssaCFGOptimized code: 21200
 // a() -> 1
 // b(uint256): 0 -> 2
 // b(uint256): 1 -> 3

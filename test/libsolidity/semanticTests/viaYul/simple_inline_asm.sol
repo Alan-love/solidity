@@ -11,8 +11,5 @@ contract C {
         x = a + b + c;
     }
 }
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // f() -> 6

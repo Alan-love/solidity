@@ -37,7 +37,10 @@ contract C {
     }
 }
 // ====
-// compileViaYul: also
 // ----
 // testRuntime() -> true
+// gas legacy: 76575
+// gas legacy code: 23600
 // testCreation() -> true
+// gas legacy: 76999
+// gas legacy code: 23600

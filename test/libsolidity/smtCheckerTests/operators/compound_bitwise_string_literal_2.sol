@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract C {
     function f() public pure {
         bytes3 y = "def";
@@ -13,5 +11,9 @@ contract C {
         assert(y == (bytes3("def") | bytes3("dee")) ^ bytes3("fed"));
     }
 }
+// ====
+// SMTEngine: all
 // ----
-// Warning 6328: (180-198): CHC: Assertion violation happens here.\nCounterexample:\n\n\n\n\nTransaction trace:\nconstructor()\nf()
+// Warning 6328: (147-165): CHC: Assertion violation happens here.
+// Info 1391: CHC: 2 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

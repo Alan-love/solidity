@@ -9,8 +9,9 @@ contract c {
         y = data2[8];
     }
 }
-
-// ====
-// compileViaYul: also
 // ----
 // test() -> 9, 4
+// gas irOptimized: 123177
+// gas legacy: 124642
+// gas legacyOptimized: 123345
+// gas ssaCFGOptimized: 123142

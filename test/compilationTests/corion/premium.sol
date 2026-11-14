@@ -19,7 +19,7 @@ contract ptokenDB is tokenDB {}
  */
 contract premium is module, safeMath {
     function replaceModule(address payable addr) external override returns (bool success) {
-        require( super.isModuleHandler(msg.sender) );
+        require( super.isModuleHandler(payable(msg.sender)) );
         require( db.replaceOwner(addr) );
         super._replaceModule(addr);
         return true;
@@ -202,11 +202,11 @@ contract premium is module, safeMath {
             @success    If the function was successful.
         */
         if ( from != msg.sender ) {
-            (bool _success, uint256 _reamining, uint256 _nonce) = db.getAllowance(from, msg.sender);
+            (bool _success, uint256 _remaining, uint256 _nonce) = db.getAllowance(from, msg.sender);
             require( _success );
-            _reamining = safeSub(_reamining, amount);
+            _remaining = safeSub(_remaining, amount);
             _nonce = safeAdd(_nonce, 1);
-            require( db.setAllowance(from, msg.sender, _reamining, _nonce) );
+            require( db.setAllowance(from, msg.sender, _remaining, _nonce) );
             emit AllowanceUsed(msg.sender, from, amount);
         }
         bytes memory _data;
@@ -229,7 +229,7 @@ contract premium is module, safeMath {
     function transfer(address to, uint256 amount, bytes calldata extraData) isReady external returns (bool success) {
         /*
             Launch a transaction where we transfer from a given address to another one.
-            After thetransaction the approvedCorionPremiumToken function of the receiver’s address is going to be called with the given data.
+            After the transaction the approvedCorionPremiumToken function of the receiver’s address is going to be called with the given data.
 
             @to         For who?
             @amount     Amount
@@ -310,7 +310,7 @@ contract premium is module, safeMath {
 
             @addr       The address which is needed to be checked.
 
-            @success    Is the address crontact or not
+            @success    Is the address contract or not
         */
         uint256 _codeLength;
         assembly {

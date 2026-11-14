@@ -1,4 +1,3 @@
-pragma experimental SMTChecker;
 contract C {
     function h() public pure returns (bytes32 val, bytes3 val2) { return ("abc", "def"); }
     function g() public pure returns (bytes32 val) { return "abc"; }
@@ -11,5 +10,9 @@ contract C {
 		assert(v2 == "cde");
 	}
 }
+// ====
+// SMTEngine: all
 // ----
-// Warning 6328: (442-461): CHC: Assertion violation happens here.\nCounterexample:\n\n\n\n\nTransaction trace:\nconstructor()\na()
+// Warning 6328: (410-429): CHC: Assertion violation happens here.\nCounterexample:\n\nv1 = 0x6162630000000000000000000000000000000000000000000000000000000000\nv2 = 0x646566\n\nTransaction trace:\nC.constructor()\nC.a()\n    C.f2() -- internal call\n        C.h() -- internal call
+// Info 1391: CHC: 1 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

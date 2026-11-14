@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 interface ERC165 {
     /// @notice Query if a contract implements an interface
     /// @param interfaceID The interface identifier, as specified in ERC-165
@@ -40,7 +38,9 @@ contract Homer is ERC165, Simpson {
         assert(supportsInterface(type(PeaceMaker).interfaceId));
     }
 }
-
-
+// ====
+// SMTEngine: all
 // ----
-// Warning 6328: (1373-1428): CHC: Assertion violation happens here.\nCounterexample:\n\n\n\n\nTransaction trace:\nconstructor()\ncheck()
+// Warning 6328: (1340-1395): CHC: Assertion violation happens here.\nCounterexample:\n\n\nTransaction trace:\nHomer.constructor()\nHomer.check()\n    Homer.supportsInterface(0x73b6b492) -- internal call\n    Homer.supportsInterface(0x01ffc9a7) -- internal call\n    Homer.supportsInterface(0x8b9eb9ca) -- internal call
+// Info 1391: CHC: 2 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

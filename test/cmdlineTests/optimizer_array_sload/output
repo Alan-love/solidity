@@ -1,65 +1,70 @@
 Optimized IR:
-/*******************************************************
- *                       WARNING                       *
- *  Solidity to Yul compilation is still EXPERIMENTAL  *
- *       It can result in LOSS OF FUNDS or worse       *
- *                !USE AT YOUR OWN RISK!               *
- *******************************************************/
-
+/// @use-src 0:"input.sol"
 object "Arraysum_34" {
     code {
         {
-            mstore(64, 128)
+            /// @src 0:80:429  "contract Arraysum {..."
+            let _1 := memoryguard(128)
+            mstore(64, _1)
             if callvalue() { revert(0, 0) }
-            let _1 := datasize("Arraysum_34_deployed")
-            codecopy(0, dataoffset("Arraysum_34_deployed"), _1)
-            return(0, _1)
+            let _2 := datasize("Arraysum_34_deployed")
+            codecopy(_1, dataoffset("Arraysum_34_deployed"), _2)
+            return(_1, _2)
         }
     }
+    /// @use-src 0:"input.sol"
     object "Arraysum_34_deployed" {
         code {
             {
-                mstore(64, 128)
-                if iszero(lt(calldatasize(), 4))
+                /// @src 0:80:429  "contract Arraysum {..."
+                mstore(64, memoryguard(128))
+                if gt(calldatasize(), 3)
                 {
-                    let _1 := 0
-                    if eq(0x81d73423, shr(224, calldataload(_1)))
+                    if eq(0x81d73423, shr(224, calldataload(0)))
                     {
-                        if callvalue() { revert(_1, _1) }
-                        if slt(add(calldatasize(), not(3)), _1) { revert(_1, _1) }
-                        let vloc_sum := _1
-                        let vloc_i := _1
-                        let _2 := sload(_1)
+                        if callvalue() { revert(0, 0) }
+                        if slt(add(calldatasize(), not(3)), 0) { revert(0, 0) }
+                        let var_sum := 0
+                        /// @src 0:175:182  "sum = 0"
+                        var_sum := /** @src 0:80:429  "contract Arraysum {..." */ 0
+                        /// @src 0:368:378  "uint i = 0"
+                        let var_i := /** @src 0:80:429  "contract Arraysum {..." */ 0
+                        let _1 := sload(0)
+                        /// @src 0:364:423  "for(uint i = 0; i < values.length; i++)..."
                         for { }
-                        lt(vloc_i, _2)
+                        /** @src 0:80:429  "contract Arraysum {..." */ 1
+                        /// @src 0:368:378  "uint i = 0"
                         {
-                            if gt(vloc_i, not(1)) { invalid() }
-                            vloc_i := add(vloc_i, 1)
+                            /// @src 0:399:402  "i++"
+                            var_i := /** @src 0:80:429  "contract Arraysum {..." */ add(/** @src 0:399:402  "i++" */ var_i, /** @src 0:80:429  "contract Arraysum {..." */ 1)
                         }
+                        /// @src 0:399:402  "i++"
                         {
-                            mstore(_1, _1)
-                            let _3 := sload(add(keccak256(_1, 0x20), vloc_i))
-                            if gt(vloc_sum, not(_3)) { invalid() }
-                            vloc_sum := add(vloc_sum, _3)
+                            /// @src 0:380:397  "i < values.length"
+                            let _2 := iszero(lt(var_i, _1))
+                            if _2 { break }
+                            /// @src 0:80:429  "contract Arraysum {..."
+                            _2 := 0
+                            mstore(0, 0)
+                            let sum := add(var_sum, sload(add(18569430475105882587588266137607568536673111973893317399460219858819262702947, var_i)))
+                            if gt(var_sum, sum)
+                            {
+                                mstore(0, shl(224, 0x4e487b71))
+                                mstore(4, 0x11)
+                                revert(0, 0x24)
+                            }
+                            /// @src 0:407:423  "sum += values[i]"
+                            var_sum := sum
                         }
-                        let memPos := allocateMemory(_1)
-                        return(memPos, sub(abi_encode_uint(memPos, vloc_sum), memPos))
+                        /// @src 0:80:429  "contract Arraysum {..."
+                        let memPos := mload(64)
+                        mstore(memPos, var_sum)
+                        return(memPos, 0x20)
                     }
                 }
                 revert(0, 0)
             }
-            function abi_encode_uint(headStart, value0) -> tail
-            {
-                tail := add(headStart, 32)
-                mstore(headStart, value0)
-            }
-            function allocateMemory(size) -> memPtr
-            {
-                memPtr := mload(64)
-                let newFreePtr := add(memPtr, size)
-                if or(gt(newFreePtr, 0xffffffffffffffff), lt(newFreePtr, memPtr)) { invalid() }
-                mstore(64, newFreePtr)
-            }
         }
+        data ".metadata" hex"<BYTECODE REMOVED>"
     }
 }

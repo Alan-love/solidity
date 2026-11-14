@@ -16,8 +16,10 @@ contract c {
             data.pop();
     }
 }
-// ====
-// compileViaYul: also
 // ----
 // test() -> 38, 28, 18
-// storage: empty
+// gas irOptimized: 148378
+// gas legacy: 151182
+// gas legacyOptimized: 142418
+// gas ssaCFGOptimized: 150152
+// storageEmpty -> 1

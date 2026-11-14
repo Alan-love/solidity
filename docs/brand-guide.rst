@@ -9,7 +9,9 @@ The Solidity Brand
 ==================
 
 The Solidity programming language is an open-source, community project
-governed by a core team. The core team is sponsored by the `Ethereum
+governed by a core team. The core team is part of the `Argot Collective
+<https://argot.org/>`_, a non-profit that develops and maintains Solidity.
+The project was originally started at and sponsored by the `Ethereum
 Foundation <https://ethereum.foundation/>`_.
 
 This document aims to provide information about how to best use the
@@ -59,7 +61,7 @@ Under the following terms:
 
 - **Attribution** — You must give appropriate credit, provide a link to
   the license, and indicate if changes were made. You may do so in any
-  reasonable manner, but not in any way that suggests the the Solidity
+  reasonable manner, but not in any way that suggests that the Solidity
   core team endorses you or your use.
 
 When using the Solidity logo, please respect the Solidity logo guidelines.
@@ -67,7 +69,7 @@ When using the Solidity logo, please respect the Solidity logo guidelines.
 Solidity Logo Guidelines
 ========================
 
-.. image:: logo.svg
+.. image:: solidity_logo.svg
   :width: 256
 
 *(Right click on the logo to download it.)*

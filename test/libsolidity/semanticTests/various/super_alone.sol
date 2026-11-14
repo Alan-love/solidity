@@ -3,9 +3,5 @@ contract A {
         super;
     }
 }
-
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // f() ->

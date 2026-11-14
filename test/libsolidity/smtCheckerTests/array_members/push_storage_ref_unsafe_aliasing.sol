@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract C {
 	uint[][] a;
 	function f() public {
@@ -8,8 +6,17 @@ contract C {
 		a[0][0] = 16;
 		uint[] storage b = a[0];
 		b[0] = 32;
+		// Access is safe but fails due to aliasing.
 		assert(a[0][0] == 16);
 	}
 }
+// ====
+// SMTEngine: all
+// SMTIgnoreCex: yes
+// SMTIgnoreOS: macos
 // ----
-// Warning 6328: (167-188): CHC: Assertion violation happens here.\nCounterexample:\na = [[17, 12, 12, 12, 12], [15, 15], [15, 15], [15, 15], [15, 15], [15, 15], [15, 15], [15, 15], [15, 15], [15, 15], [15, 15], [15, 15], [15, 15], [15, 15], [15, 15], [15, 15]]\n\n\n\nTransaction trace:\nconstructor()\nState: a = []\nf()
+// Warning 6368: (188-192): CHC: Out of bounds access happens here.\nCounterexample:\n\nb = [32]\n\nTransaction trace:\nC.constructor()\nState: a = []\nC.f()
+// Warning 6368: (188-195): CHC: Out of bounds access happens here.\nCounterexample:\n\nb = [32]\n\nTransaction trace:\nC.constructor()\nState: a = []\nC.f()
+// Warning 6328: (181-202): CHC: Assertion violation happens here.\nCounterexample:\n\nb = [32]\n\nTransaction trace:\nC.constructor()\nState: a = []\nC.f()
+// Info 1391: CHC: 5 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

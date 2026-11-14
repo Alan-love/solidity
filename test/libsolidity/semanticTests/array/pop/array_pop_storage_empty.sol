@@ -5,8 +5,6 @@ contract c {
         data.pop();
     }
 }
-// ====
-// compileViaYul: also
 // ----
 // test() ->
-// storage: empty
+// storageEmpty -> 1

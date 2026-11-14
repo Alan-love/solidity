@@ -40,6 +40,7 @@ namespace solidity::frontend
  *  - whether a modifier is in a function header
  *  - whether an event is used outside of an emit statement
  *  - whether a variable is declared in a interface
+ *  - whether an error uses a reserved signature
  *
  *  When adding a new checker, make sure a visitor that forwards calls that your
  *  checker uses exists in PostTypeChecker. Add missing ones.
@@ -77,10 +78,16 @@ private:
 	bool visit(VariableDeclaration const& _variable) override;
 	void endVisit(VariableDeclaration const& _variable) override;
 
+	void endVisit(ErrorDefinition const& _error) override;
+
 	bool visit(EmitStatement const& _emit) override;
 	void endVisit(EmitStatement const& _emit) override;
 
+	bool visit(RevertStatement const& _revert) override;
+	void endVisit(RevertStatement const& _revert) override;
+
 	bool visit(FunctionCall const& _functionCall) override;
+	void endVisit(FunctionCall const& _functionCall) override;
 
 	bool visit(Identifier const& _identifier) override;
 	bool visit(MemberAccess const& _identifier) override;
@@ -90,6 +97,9 @@ private:
 
 	bool visit(ModifierInvocation const& _modifierInvocation) override;
 	void endVisit(ModifierInvocation const& _modifierInvocation) override;
+
+	bool visit(ForStatement const& _forStatement) override;
+	void endVisit(ForStatement const& _forStatement) override;
 
 	template <class T>
 	bool callVisit(T const& _node)

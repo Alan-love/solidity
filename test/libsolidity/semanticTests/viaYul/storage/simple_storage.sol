@@ -10,9 +10,6 @@ contract C {
         _y = y;
     }
 }
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // setX(uint256): 6 -> 6
 // setY(uint256): 2 -> 2

@@ -7,9 +7,5 @@ contract C {
         return 0;
     }
 }
-
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // test() -> 0

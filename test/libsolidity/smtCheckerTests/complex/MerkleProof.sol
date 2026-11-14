@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 /**
  * @title MerkleProof
  * @dev Merkle proof verification based on
@@ -32,9 +30,7 @@ library MerkleProof {
         return computedHash == root;
     }
 }
-
+// ====
+// SMTEngine: all
 // ----
-// Warning 4588: (988-1032): Assertion checker does not yet implement this type of function call.
-// Warning 4588: (1175-1219): Assertion checker does not yet implement this type of function call.
-// Warning 4588: (988-1032): Assertion checker does not yet implement this type of function call.
-// Warning 4588: (1175-1219): Assertion checker does not yet implement this type of function call.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

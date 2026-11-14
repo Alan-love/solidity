@@ -18,11 +18,13 @@ contract C {
 		return array[index];
 	}
 }
-// ====
-// compileViaYul: also
 // ----
 // l() -> 0
 // g(uint256): 70 ->
+// gas irOptimized: 181775
+// gas legacy: 175192
+// gas legacyOptimized: 175005
+// gas ssaCFGOptimized: 182418
 // l() -> 70
 // a(uint256): 69 -> left(69)
 // f() ->

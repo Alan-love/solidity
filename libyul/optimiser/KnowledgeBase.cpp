@@ -23,68 +23,144 @@
 
 #include <libyul/AST.h>
 #include <libyul/Utilities.h>
-#include <libyul/optimiser/SimplificationRules.h>
 #include <libyul/optimiser/DataFlowAnalyzer.h>
-#include <libyul/optimiser/Semantics.h>
 
 #include <libsolutil/CommonData.h>
 
 #include <variant>
 
-using namespace std;
 using namespace solidity;
 using namespace solidity::yul;
 
-bool KnowledgeBase::knownToBeDifferent(YulString _a, YulString _b)
+KnowledgeBase::KnowledgeBase(std::map<YulName, AssignedValue> const& _ssaValues, Dialect const& _dialect):
+	m_valuesAreSSA(true),
+	m_variableValues([_ssaValues](YulName _var) { return util::valueOrNullptr(_ssaValues, _var); }),
+	m_addBuiltinHandle(_dialect.findBuiltin("add")),
+	m_subBuiltinHandle(_dialect.findBuiltin("sub"))
+{}
+
+bool KnowledgeBase::knownToBeDifferent(YulName _a, YulName _b)
 {
-	// Try to use the simplification rules together with the
-	// current values to turn `sub(_a, _b)` into a nonzero constant.
-	// If that fails, try `eq(_a, _b)`.
+	if (std::optional<u256> difference = differenceIfKnownConstant(_a, _b))
+		return difference != 0;
+	return false;
+}
 
-	Expression expr1 = simplify(FunctionCall{{}, {{}, "sub"_yulstring}, util::make_vector<Expression>(Identifier{{}, _a}, Identifier{{}, _b})});
-	if (holds_alternative<Literal>(expr1))
-		return valueOfLiteral(std::get<Literal>(expr1)) != 0;
+std::optional<u256> KnowledgeBase::differenceIfKnownConstant(YulName _a, YulName _b)
+{
+	VariableOffset offA = explore(_a);
+	VariableOffset offB = explore(_b);
+	if (offA.reference == offB.reference)
+		return offA.offset - offB.offset;
+	else
+		return std::nullopt;
+}
 
-	Expression expr2 = simplify(FunctionCall{{}, {{}, "eq"_yulstring}, util::make_vector<Expression>(Identifier{{}, _a}, Identifier{{}, _b})});
-	if (holds_alternative<Literal>(expr2))
-		return valueOfLiteral(std::get<Literal>(expr2)) == 0;
+
+bool KnowledgeBase::knownToBeDifferentByAtLeast32(YulName _a, YulName _b)
+{
+	if (std::optional<u256> difference = differenceIfKnownConstant(_a, _b))
+		return difference >= 32 && difference <= u256(0) - 32;
 
 	return false;
 }
 
-bool KnowledgeBase::knownToBeDifferentByAtLeast32(YulString _a, YulString _b)
+bool KnowledgeBase::knownToBeZero(YulName _a)
 {
-	// Try to use the simplification rules together with the
-	// current values to turn `sub(_a, _b)` into a constant whose absolute value is at least 32.
+	return valueIfKnownConstant(_a) == 0;
+}
 
-	Expression expr1 = simplify(FunctionCall{{}, {{}, "sub"_yulstring}, util::make_vector<Expression>(Identifier{{}, _a}, Identifier{{}, _b})});
-	if (holds_alternative<Literal>(expr1))
+std::optional<u256> KnowledgeBase::valueIfKnownConstant(YulName _a)
+{
+	return explore(_a).absoluteValue();
+}
+
+std::optional<u256> KnowledgeBase::valueIfKnownConstant(Expression const& _expression)
+{
+	if (Identifier const* ident = std::get_if<Identifier>(&_expression))
+		return valueIfKnownConstant(ident->name);
+	else if (Literal const* lit = std::get_if<Literal>(&_expression))
+		return lit->value.value();
+	else
+		return std::nullopt;
+}
+
+KnowledgeBase::VersionedVariable KnowledgeBase::withCurrentVersion(YulName _var) const
+{
+	return {
+		.name = _var,
+		.version = util::valueOrDefault(m_currentVersions, _var, 0U)
+	};
+}
+
+KnowledgeBase::VariableOffset KnowledgeBase::explore(YulName _var)
+{
+	yulAssert(!_var.empty());
+	VersionedVariable const currentVar = withCurrentVersion(_var);
+	AssignedValue const* assignedValueWrapper = m_variableValues(_var);
+	Expression const* assignedValue = assignedValueWrapper ? assignedValueWrapper->value : nullptr;
+	// A versioned variable always refers to the same value,
+	// so we check if we already computed it
+	if (CachedOffset const* cachedOffset = util::valueOrNullptr(m_offsets, currentVar))
 	{
-		u256 val = valueOfLiteral(std::get<Literal>(expr1));
-		return val >= 32 && val <= u256(0) - 32;
+		yulAssert(
+			!assignedValue || cachedOffset->computedFrom == assignedValue,
+			"Value changed without a call to variableChanged()."
+		);
+		return cachedOffset->offset;
 	}
 
-	return false;
+	VariableOffset offset{.reference = currentVar, .offset = 0};
+	// This terminates only because the owner of the knowledge base is required to ensure that
+	// a value does not reference _var, not even indirectly.
+	// We explore the variables referenced by the value at their current version, as we cannot
+	// tell which version was current when the value was assigned. This is only correct if none
+	// of them changed since then. It is the owner's responsibility to return nullptr for the
+	// value if they did.
+	if (assignedValue)
+		if (std::optional<VariableOffset> const offsetIfKnown = explore(*assignedValue))
+			offset = *offsetIfKnown;
+	m_offsets[currentVar] = {.offset = offset, .computedFrom = assignedValue};
+	return offset;
 }
 
-Expression KnowledgeBase::simplify(Expression _expression)
+std::optional<KnowledgeBase::VariableOffset> KnowledgeBase::explore(Expression const& _value)
 {
-	bool startedRecursion = (m_recursionCounter == 0);
-	ScopeGuard{[&] { if (startedRecursion) m_recursionCounter = 0; }};
+	if (Literal const* literal = std::get_if<Literal>(&_value))
+		return VariableOffset{VersionedVariable{}, literal->value.value()};
+	else if (Identifier const* identifier = std::get_if<Identifier>(&_value))
+		return explore(identifier->name);
+	else if (
+		FunctionCall const* f = std::get_if<FunctionCall>(&_value);
+		f && isBuiltinFunctionCall(*f)
+	)
+	{
+		if (std::get<BuiltinName>(f->functionName).handle == m_addBuiltinHandle)
+		{
+			if (std::optional<VariableOffset> a = explore(f->arguments[0]))
+				if (std::optional<VariableOffset> b = explore(f->arguments[1]))
+				{
+					u256 offset = a->offset + b->offset;
+					if (a->isAbsolute())
+						// a is constant
+						return VariableOffset{b->reference, offset};
+					else if (b->isAbsolute())
+						// b is constant
+						return VariableOffset{a->reference, offset};
+				}
+		}
+		else if (std::get<BuiltinName>(f->functionName).handle == m_subBuiltinHandle)
+			if (std::optional<VariableOffset> a = explore(f->arguments[0]))
+				if (std::optional<VariableOffset> b = explore(f->arguments[1]))
+				{
+					u256 offset = a->offset - b->offset;
+					if (a->reference == b->reference)
+						return VariableOffset{VersionedVariable{}, offset};
+					else if (b->isAbsolute())
+						// b is constant
+						return VariableOffset{a->reference, offset};
+				}
+	}
 
-	if (startedRecursion)
-		m_recursionCounter = 100;
-	else if (m_recursionCounter == 1)
-		return _expression;
-	else
-		--m_recursionCounter;
-
-	if (holds_alternative<FunctionCall>(_expression))
-		for (Expression& arg: std::get<FunctionCall>(_expression).arguments)
-			arg = simplify(arg);
-
-	if (auto match = SimplificationRules::findFirstMatch(_expression, m_dialect, m_variableValues))
-		return simplify(match->action().toExpression(locationOf(_expression)));
-
-	return _expression;
+	return std::nullopt;
 }

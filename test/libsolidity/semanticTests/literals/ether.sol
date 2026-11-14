@@ -3,8 +3,5 @@ contract C {
 
 	function f() public view returns(uint) { return x; }
 }
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // f() -> 1000000000000000000

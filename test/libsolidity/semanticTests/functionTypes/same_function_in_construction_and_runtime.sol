@@ -13,9 +13,6 @@ contract C {
         return double(_arg);
     }
 }
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // runtime(uint256): 3 -> 6
 // initial() -> 4

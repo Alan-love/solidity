@@ -2,8 +2,7 @@
   "absolutePath": "a",
   "id": 5,
   "nodeType": "SourceUnit",
-  "nodes":
-  [
+  "nodes": [
     {
       "abstract": false,
       "baseContracts": [],
@@ -11,23 +10,22 @@
       "contractKind": "contract",
       "id": 4,
       "name": "C",
+      "nameLocation": "9:1:1",
       "nodeType": "ContractDefinition",
-      "nodes":
-      [
+      "nodes": [
         {
           "constant": false,
           "id": 3,
           "mutability": "mutable",
           "name": "i",
+          "nameLocation": "20:1:1",
           "nodeType": "VariableDeclaration",
           "src": "13:8:1",
           "stateVariable": false,
           "storageLocation": "default",
           "typeDescriptions": {},
-          "typeName":
-          {
-            "baseType":
-            {
+          "typeName": {
+            "baseType": {
               "id": 1,
               "name": "uint",
               "nodeType": "ElementaryTypeName",
@@ -42,7 +40,9 @@
           "visibility": "internal"
         }
       ],
-      "src": "0:24:1"
+      "src": "0:24:1",
+      "usedErrors": [],
+      "usedEvents": []
     }
   ],
   "src": "0:25:1"

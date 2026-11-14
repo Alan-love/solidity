@@ -8,8 +8,5 @@ contract C {
     return (g(2), g(false));
   }
 }
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // foo() -> 24, true

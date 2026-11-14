@@ -15,8 +15,5 @@ contract C {
         return true;
     }
 }
-
-// ====
-// compileViaYul: also
 // ----
 // f() -> true # This code interprets x as an array length and thus will go out of gas. neither of the two should throw due to out-of-bounds access #

@@ -20,16 +20,16 @@
  */
 
 #include <test/tools/yulInterpreter/Interpreter.h>
+#include <test/tools/yulInterpreter/Inspector.h>
 
 #include <libyul/AsmAnalysisInfo.h>
-#include <libyul/AsmParser.h>
 #include <libyul/AsmAnalysis.h>
 #include <libyul/Dialect.h>
 #include <libyul/backends/evm/EVMDialect.h>
-#include <libyul/AssemblyStack.h>
+#include <libyul/YulStack.h>
 
+#include <liblangutil/DebugInfoSelection.h>
 #include <liblangutil/Exceptions.h>
-#include <liblangutil/ErrorReporter.h>
 #include <liblangutil/EVMVersion.h>
 #include <liblangutil/SourceReferenceFormatter.h>
 
@@ -43,7 +43,6 @@
 #include <memory>
 #include <iostream>
 
-using namespace std;
 using namespace solidity;
 using namespace solidity::util;
 using namespace solidity::langutil;
@@ -55,35 +54,29 @@ namespace po = boost::program_options;
 namespace
 {
 
-void printErrors(ErrorList const& _errors)
+std::pair<std::shared_ptr<AST const>, std::shared_ptr<AsmAnalysisInfo>> parse(std::string const& _source)
 {
-	for (auto const& error: _errors)
-		SourceReferenceFormatter(cout).printErrorInformation(*error);
-}
-
-pair<shared_ptr<Block>, shared_ptr<AsmAnalysisInfo>> parse(string const& _source)
-{
-	AssemblyStack stack(
+	YulStack stack(
 		langutil::EVMVersion(),
-		AssemblyStack::Language::StrictAssembly,
-		solidity::frontend::OptimiserSettings::none()
+		solidity::frontend::OptimiserSettings::none(),
+		DebugInfoSelection::Default()
 	);
 	if (stack.parseAndAnalyze("--INPUT--", _source))
 	{
-		yulAssert(stack.errors().empty(), "Parsed successfully but had errors.");
-		return make_pair(stack.parserResult()->code, stack.parserResult()->analysisInfo);
+		yulAssert(!Error::hasErrorsWarningsOrInfos(stack.errors()), "Parsed successfully but had errors.");
+		return make_pair(stack.parserResult()->code(), stack.parserResult()->analysisInfo);
 	}
 	else
 	{
-		printErrors(stack.errors());
+		SourceReferenceFormatter(std::cout, stack, true, false).printErrorInformation(stack.errors());
 		return {};
 	}
 }
 
-void interpret(string const& _source)
+void interpret(std::string const& _source, bool _inspect, bool _disableExternalCalls)
 {
-	shared_ptr<Block> ast;
-	shared_ptr<AsmAnalysisInfo> analysisInfo;
+	std::shared_ptr<AST const> ast;
+	std::shared_ptr<AsmAnalysisInfo> analysisInfo;
 	tie(ast, analysisInfo) = parse(_source);
 	if (!ast || !analysisInfo)
 		return;
@@ -92,14 +85,16 @@ void interpret(string const& _source)
 	state.maxTraceSize = 10000;
 	try
 	{
-		Dialect const& dialect(EVMDialect::strictAssemblyForEVMObjects(langutil::EVMVersion{}));
-		Interpreter::run(state, dialect, *ast);
+		if (_inspect)
+			InspectedInterpreter::run(std::make_shared<Inspector>(_source, state), state, *ast, _disableExternalCalls, /*disableMemoryTracing=*/false);
+		else
+			Interpreter::run(state, *ast, _disableExternalCalls, /*disableMemoryTracing=*/false);
 	}
 	catch (InterpreterTerminatedGeneric const&)
 	{
 	}
 
-	state.dumpTraceAndState(cout);
+	state.dumpTraceAndState(std::cout, /*disableMemoryTracing=*/false);
 }
 
 }
@@ -116,7 +111,9 @@ Allowed options)",
 		po::options_description::m_default_line_length - 23);
 	options.add_options()
 		("help", "Show this help screen.")
-		("input-file", po::value<vector<string>>(), "input file");
+		("enable-external-calls", "Enable external calls")
+		("interactive", "Run interactive")
+		("input-file", po::value<std::vector<std::string>>(), "input file");
 	po::positional_options_description filesPositions;
 	filesPositions.add("input-file", -1);
 
@@ -129,17 +126,17 @@ Allowed options)",
 	}
 	catch (po::error const& _exception)
 	{
-		cerr << _exception.what() << endl;
+		std::cerr << _exception.what() << std::endl;
 		return 1;
 	}
 
 	if (arguments.count("help"))
-		cout << options;
+		std::cout << options;
 	else
 	{
-		string input;
+		std::string input;
 		if (arguments.count("input-file"))
-			for (string path: arguments["input-file"].as<vector<string>>())
+			for (std::string path: arguments["input-file"].as<std::vector<std::string>>())
 			{
 				try
 				{
@@ -147,14 +144,19 @@ Allowed options)",
 				}
 				catch (FileNotFound const&)
 				{
-					cerr << "File not found: " << path << endl;
+					std::cerr << "File not found: " << path << std::endl;
+					return 1;
+				}
+				catch (NotAFile const&)
+				{
+					std::cerr << "Not a regular file: " << path << std::endl;
 					return 1;
 				}
 			}
 		else
-			input = readStandardInput();
+			input = readUntilEnd(std::cin);
 
-		interpret(input);
+		interpret(input, arguments.count("interactive"), !arguments.count("enable-external-calls"));
 	}
 
 	return 0;

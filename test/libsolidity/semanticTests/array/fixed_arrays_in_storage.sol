@@ -33,9 +33,6 @@ contract c {
         l2 = ids.length;
     }
 }
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // setIDStatic(uint256): 0xb ->
 // getID(uint256): 0x2 -> 0xb

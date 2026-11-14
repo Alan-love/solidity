@@ -3,15 +3,24 @@ contract c {
     function copy(uint from, uint to) public returns (bool) { data[to] = data[from]; return true; }
     mapping(uint => bytes) data;
 }
-// ====
-// compileViaYul: also
 // ----
 // set(uint256): 1, 2 -> true
+// gas irOptimized: 110557
+// gas legacy: 111310
+// gas legacyOptimized: 110741
+// gas ssaCFGOptimized: 110550
 // set(uint256): 2, 2, 3, 4, 5 -> true
-// storage: nonempty
+// gas irOptimized: 177508
+// gas legacy: 178312
+// gas legacyOptimized: 177716
+// gas ssaCFGOptimized: 177492
+// storageEmpty -> 0
 // copy(uint256,uint256): 1, 2 -> true
-// storage: nonempty
+// gas irOptimized: 48419
+// storageEmpty -> 0
 // copy(uint256,uint256): 99, 1 -> true
-// storage: nonempty
+// gas irOptimized: 35639
+// storageEmpty -> 0
 // copy(uint256,uint256): 99, 2 -> true
-// storage: empty
+// gas irOptimized: 35639
+// storageEmpty -> 1

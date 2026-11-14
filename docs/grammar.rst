@@ -2,12 +2,12 @@
 Language Grammar
 ****************
 
-.. a4:autogrammar:: Solidity
-   :only-reachable-from: Solidity.sourceUnit
+.. syntax:autogrammar:: SolidityParser.g4
+   :root-rule: SolidityParser.sourceUnit
    :undocumented:
    :cc-to-dash:
 
-.. a4:autogrammar:: SolidityLexer
-   :only-reachable-from: Solidity.sourceUnit
+.. syntax:autogrammar:: SolidityLexer.g4
+   :root-rule: SolidityParser.sourceUnit
    :fragments:
    :cc-to-dash:

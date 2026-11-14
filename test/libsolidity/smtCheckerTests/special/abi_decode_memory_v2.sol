@@ -1,5 +1,4 @@
-pragma experimental SMTChecker;
-pragma experimental "ABIEncoderV2";
+pragma abicoder v2;
 
 contract C {
 	struct S { uint x; uint[] b; }
@@ -7,12 +6,7 @@ contract C {
 		return abi.decode("abc", (S, bytes, uint[][2]));
 	}
 }
+// ====
+// SMTEngine: all
 // ----
-// Warning 8364: (231-237): Assertion checker does not yet implement type type(uint256[] memory)
-// Warning 8364: (231-240): Assertion checker does not yet implement type type(uint256[] memory[2] memory)
-// Warning 8364: (221-222): Assertion checker does not yet implement type type(struct C.S storage pointer)
-// Warning 4588: (202-242): Assertion checker does not yet implement this type of function call.
-// Warning 8364: (231-237): Assertion checker does not yet implement type type(uint256[] memory)
-// Warning 8364: (231-240): Assertion checker does not yet implement type type(uint256[] memory[2] memory)
-// Warning 8364: (221-222): Assertion checker does not yet implement type type(struct C.S storage pointer)
-// Warning 4588: (202-242): Assertion checker does not yet implement this type of function call.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

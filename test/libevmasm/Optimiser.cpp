@@ -25,6 +25,7 @@
 
 #include <libevmasm/CommonSubexpressionEliminator.h>
 #include <libevmasm/PeepholeOptimiser.h>
+#include <libevmasm/Inliner.h>
 #include <libevmasm/JumpdestRemover.h>
 #include <libevmasm/ControlFlowGraph.h>
 #include <libevmasm/BlockDeduplicator.h>
@@ -32,13 +33,15 @@
 
 #include <boost/test/unit_test.hpp>
 
+#include <range/v3/algorithm/any_of.hpp>
+
 #include <string>
 #include <tuple>
 #include <memory>
 
-using namespace std;
 using namespace solidity::langutil;
 using namespace solidity::evmasm;
+using namespace solidity::test;
 
 namespace solidity::frontend::test
 {
@@ -66,8 +69,10 @@ namespace
 	{
 		AssemblyItems input = addDummyLocations(_input);
 
-		bool usesMsize = (find(_input.begin(), _input.end(), AssemblyItem{Instruction::MSIZE}) != _input.end());
-		evmasm::CommonSubexpressionEliminator cse(_state);
+		bool usesMsize = ranges::any_of(_input, [](AssemblyItem const& _i) {
+			return _i == AssemblyItem{Instruction::MSIZE} || _i.type() == VerbatimBytecode;
+		});
+		evmasm::CommonSubexpressionEliminator cse(_state, CommonOptions::get().evmVersion());
 		BOOST_REQUIRE(cse.feedItems(input.begin(), input.end(), usesMsize) == input.end());
 		AssemblyItems output = cse.getOptimizedItems();
 
@@ -88,6 +93,45 @@ namespace
 		BOOST_CHECK_EQUAL_COLLECTIONS(_expectation.begin(), _expectation.end(), output.begin(), output.end());
 	}
 
+	/// In contrast to the function `CSE`, this function doesn't finish the CSE optimization on an
+	/// instruction that breaks CSE Analysis block. Copied from Assembly.cpp
+	AssemblyItems fullCSE(AssemblyItems const& _input)
+	{
+		AssemblyItems optimisedItems;
+
+		bool usesMSize = ranges::any_of(_input, [](AssemblyItem const& _i) {
+			return _i == AssemblyItem{Instruction::MSIZE} || _i.type() == VerbatimBytecode;
+		});
+
+		auto iter = _input.begin();
+		while (iter != _input.end())
+		{
+			KnownState emptyState;
+			CommonSubexpressionEliminator eliminator{emptyState, CommonOptions::get().evmVersion()};
+			auto orig = iter;
+			iter = eliminator.feedItems(iter, _input.end(), usesMSize);
+			bool shouldReplace = false;
+			AssemblyItems optimisedChunk;
+			optimisedChunk = eliminator.getOptimizedItems();
+			shouldReplace = (optimisedChunk.size() < static_cast<size_t>(iter - orig));
+			if (shouldReplace)
+				optimisedItems += optimisedChunk;
+			else
+				copy(orig, iter, back_inserter(optimisedItems));
+		}
+
+		return optimisedItems;
+	}
+
+	void checkFullCSE(
+		AssemblyItems const& _input,
+		AssemblyItems const& _expectation
+	)
+	{
+		AssemblyItems output = fullCSE(_input);
+		BOOST_CHECK_EQUAL_COLLECTIONS(_expectation.begin(), _expectation.end(), output.begin(), output.end());
+	}
+
 	AssemblyItems CFG(AssemblyItems const& _input)
 	{
 		AssemblyItems output = _input;
@@ -97,9 +141,9 @@ namespace
 			ControlFlowGraph cfg(output);
 			AssemblyItems optItems;
 			for (BasicBlock const& block: cfg.optimisedBlocks())
-				copy(output.begin() + block.begin, output.begin() + block.end,
+				copy(output.begin() + static_cast<int>(block.begin), output.begin() + static_cast<int>(block.end),
 					 back_inserter(optItems));
-			output = move(optItems);
+			output = std::move(optItems);
 		}
 		return output;
 	}
@@ -146,7 +190,7 @@ BOOST_AUTO_TEST_CASE(cse_assign_immutable_breaks)
 		Instruction::ORIGIN
 	});
 
-	evmasm::CommonSubexpressionEliminator cse{evmasm::KnownState()};
+	evmasm::CommonSubexpressionEliminator cse{evmasm::KnownState(), CommonOptions::get().evmVersion()};
 	// Make sure CSE breaks after AssignImmutable.
 	BOOST_REQUIRE(cse.feedItems(input.begin(), input.end(), false) == input.begin() + 2);
 }
@@ -154,7 +198,7 @@ BOOST_AUTO_TEST_CASE(cse_assign_immutable_breaks)
 BOOST_AUTO_TEST_CASE(cse_intermediate_swap)
 {
 	evmasm::KnownState state;
-	evmasm::CommonSubexpressionEliminator cse(state);
+	evmasm::CommonSubexpressionEliminator cse(state, CommonOptions::get().evmVersion());
 	AssemblyItems input{
 		Instruction::SWAP1, Instruction::POP, Instruction::ADD, u256(0), Instruction::SWAP1,
 		Instruction::SLOAD, Instruction::SWAP1, u256(100), Instruction::EXP, Instruction::SWAP1,
@@ -670,10 +714,10 @@ BOOST_AUTO_TEST_CASE(cse_keccak256_twice_same_content_noninterfering_store_in_be
 		Instruction::MSTORE, // m[12] = DUP1
 		Instruction::DUP12,
 		u256(12 + 32),
-		Instruction::MSTORE, // does not destoy memory knowledge
+		Instruction::MSTORE, // does not destroy memory knowledge
 		Instruction::DUP13,
 		u256(128 - 32),
-		Instruction::MSTORE, // does not destoy memory knowledge
+		Instruction::MSTORE, // does not destroy memory knowledge
 		u256(0x20),
 		u256(12),
 		Instruction::KECCAK256 // keccak256(m[12..(12+32)])
@@ -830,7 +874,7 @@ BOOST_AUTO_TEST_CASE(block_deduplicator)
 	BlockDeduplicator deduplicator(input);
 	deduplicator.deduplicate();
 
-	set<u256> pushTags;
+	std::set<u256> pushTags;
 	for (AssemblyItem const& item: input)
 		if (item.type() == PushTag)
 			pushTags.insert(item.data());
@@ -924,7 +968,7 @@ BOOST_AUTO_TEST_CASE(block_deduplicator_loops)
 	BlockDeduplicator deduplicator(input);
 	deduplicator.deduplicate();
 
-	set<u256> pushTags;
+	std::set<u256> pushTags;
 	for (AssemblyItem const& item: input)
 		if (item.type() == PushTag)
 			pushTags.insert(item.data());
@@ -957,7 +1001,82 @@ BOOST_AUTO_TEST_CASE(clear_unreachable_code)
 		AssemblyItem(PushTag, 1),
 		Instruction::JUMP
 	};
-	PeepholeOptimiser peepOpt(items);
+	PeepholeOptimiser peepOpt(items, solidity::test::CommonOptions::get().evmVersion());
+	BOOST_REQUIRE(peepOpt.optimise());
+	BOOST_CHECK_EQUAL_COLLECTIONS(
+		items.begin(), items.end(),
+		expectation.begin(), expectation.end()
+	);
+}
+
+BOOST_AUTO_TEST_CASE(deduplicateNextTagBlockSize3)
+{
+	AssemblyItems items{
+		Instruction::JUMP,
+		u256(0),
+		u256(1),
+		Instruction::REVERT,
+		AssemblyItem(Tag, 2),
+		u256(0),
+		u256(1),
+		Instruction::REVERT
+	};
+
+	AssemblyItems expectation{
+		Instruction::JUMP,
+		AssemblyItem(Tag, 2),
+		u256(0),
+		u256(1),
+		Instruction::REVERT
+	};
+	PeepholeOptimiser peepOpt(items, solidity::test::CommonOptions::get().evmVersion());
+	BOOST_REQUIRE(peepOpt.optimise());
+	BOOST_CHECK_EQUAL_COLLECTIONS(
+		items.begin(), items.end(),
+		expectation.begin(), expectation.end()
+	);
+}
+
+BOOST_AUTO_TEST_CASE(deduplicateNextTagBlockSize2)
+{
+	AssemblyItems items{
+		Instruction::JUMP,
+		u256(0),
+		Instruction::SELFDESTRUCT,
+		AssemblyItem(Tag, 2),
+		u256(0),
+		Instruction::SELFDESTRUCT
+	};
+
+	AssemblyItems expectation{
+		Instruction::JUMP,
+		AssemblyItem(Tag, 2),
+		u256(0),
+		Instruction::SELFDESTRUCT
+	};
+	PeepholeOptimiser peepOpt(items, solidity::test::CommonOptions::get().evmVersion());
+	BOOST_REQUIRE(peepOpt.optimise());
+	BOOST_CHECK_EQUAL_COLLECTIONS(
+		items.begin(), items.end(),
+		expectation.begin(), expectation.end()
+	);
+}
+
+BOOST_AUTO_TEST_CASE(deduplicateNextTagBlockSize1)
+{
+	AssemblyItems items{
+		Instruction::JUMP,
+		Instruction::STOP,
+		AssemblyItem(Tag, 2),
+		Instruction::STOP
+	};
+
+	AssemblyItems expectation{
+		Instruction::JUMP,
+		AssemblyItem(Tag, 2),
+		Instruction::STOP
+	};
+	PeepholeOptimiser peepOpt(items, solidity::test::CommonOptions::get().evmVersion());
 	BOOST_REQUIRE(peepOpt.optimise());
 	BOOST_CHECK_EQUAL_COLLECTIONS(
 		items.begin(), items.end(),
@@ -983,7 +1102,19 @@ BOOST_AUTO_TEST_CASE(peephole_double_push)
 		u256(4),
 		u256(5)
 	};
-	PeepholeOptimiser peepOpt(items);
+
+	// `PUSH0 PUSH0` is cheaper than `DUP1 PUSH0`
+	if (solidity::test::CommonOptions::get().evmVersion() >= EVMVersion::shanghai())
+		expectation = {
+			u256(0),
+			u256(0),
+			u256(5),
+			Instruction::DUP1,
+			u256(4),
+			u256(5)
+		};
+
+	PeepholeOptimiser peepOpt(items, solidity::test::CommonOptions::get().evmVersion());
 	BOOST_REQUIRE(peepOpt.optimise());
 	BOOST_CHECK_EQUAL_COLLECTIONS(
 		items.begin(), items.end(),
@@ -999,7 +1130,7 @@ BOOST_AUTO_TEST_CASE(peephole_pop_calldatasize)
 		Instruction::LT,
 		Instruction::POP
 	};
-	PeepholeOptimiser peepOpt(items);
+	PeepholeOptimiser peepOpt(items, solidity::test::CommonOptions::get().evmVersion());
 	for (size_t i = 0; i < 3; i++)
 		BOOST_CHECK(peepOpt.optimise());
 	BOOST_CHECK(items.empty());
@@ -1007,7 +1138,7 @@ BOOST_AUTO_TEST_CASE(peephole_pop_calldatasize)
 
 BOOST_AUTO_TEST_CASE(peephole_commutative_swap1)
 {
-	vector<Instruction> ops{
+	std::vector<Instruction> ops{
 		Instruction::ADD,
 		Instruction::MUL,
 		Instruction::EQ,
@@ -1032,7 +1163,7 @@ BOOST_AUTO_TEST_CASE(peephole_commutative_swap1)
 			u256(4),
 			u256(5)
 		};
-		PeepholeOptimiser peepOpt(items);
+		PeepholeOptimiser peepOpt(items, solidity::test::CommonOptions::get().evmVersion());
 		BOOST_REQUIRE(peepOpt.optimise());
 		BOOST_CHECK_EQUAL_COLLECTIONS(
 			items.begin(), items.end(),
@@ -1044,7 +1175,7 @@ BOOST_AUTO_TEST_CASE(peephole_commutative_swap1)
 BOOST_AUTO_TEST_CASE(peephole_noncommutative_swap1)
 {
 	// NOTE: not comprehensive
-	vector<Instruction> ops{
+	std::vector<Instruction> ops{
 		Instruction::SUB,
 		Instruction::DIV,
 		Instruction::SDIV,
@@ -1070,7 +1201,7 @@ BOOST_AUTO_TEST_CASE(peephole_noncommutative_swap1)
 			u256(4),
 			u256(5)
 		};
-		PeepholeOptimiser peepOpt(items);
+		PeepholeOptimiser peepOpt(items, solidity::test::CommonOptions::get().evmVersion());
 		BOOST_REQUIRE(!peepOpt.optimise());
 		BOOST_CHECK_EQUAL_COLLECTIONS(
 			items.begin(), items.end(),
@@ -1081,7 +1212,7 @@ BOOST_AUTO_TEST_CASE(peephole_noncommutative_swap1)
 
 BOOST_AUTO_TEST_CASE(peephole_swap_comparison)
 {
-	map<Instruction, Instruction> swappableOps{
+	std::map<Instruction, Instruction> swappableOps{
 		{ Instruction::LT, Instruction::GT },
 		{ Instruction::GT, Instruction::LT },
 		{ Instruction::SLT, Instruction::SGT },
@@ -1105,7 +1236,7 @@ BOOST_AUTO_TEST_CASE(peephole_swap_comparison)
 			u256(4),
 			u256(5)
 		};
-		PeepholeOptimiser peepOpt(items);
+		PeepholeOptimiser peepOpt(items, solidity::test::CommonOptions::get().evmVersion());
 		BOOST_REQUIRE(peepOpt.optimise());
 		BOOST_CHECK_EQUAL_COLLECTIONS(
 			items.begin(), items.end(),
@@ -1131,7 +1262,7 @@ BOOST_AUTO_TEST_CASE(peephole_truthy_and)
 		AssemblyItem(PushTag, 1),
 		Instruction::JUMPI
 	};
-	PeepholeOptimiser peepOpt(items);
+	PeepholeOptimiser peepOpt(items, solidity::test::CommonOptions::get().evmVersion());
 	BOOST_REQUIRE(peepOpt.optimise());
 	BOOST_CHECK_EQUAL_COLLECTIONS(
 		items.begin(), items.end(),
@@ -1164,7 +1295,7 @@ BOOST_AUTO_TEST_CASE(peephole_iszero_iszero_jumpi)
 		u256(0x20),
 		Instruction::RETURN
 	};
-	PeepholeOptimiser peepOpt(items);
+	PeepholeOptimiser peepOpt(items, solidity::test::CommonOptions::get().evmVersion());
 	BOOST_REQUIRE(peepOpt.optimise());
 	BOOST_CHECK_EQUAL_COLLECTIONS(
 	  items.begin(), items.end(),
@@ -1206,8 +1337,18 @@ BOOST_AUTO_TEST_CASE(jumpdest_removal_subassemblies)
 	// tag unifications (due to block deduplication) is also
 	// visible at the super-assembly.
 
-	Assembly main;
-	AssemblyPointer sub = make_shared<Assembly>();
+	Assembly::OptimiserSettings settings;
+	settings.runInliner = false;
+	settings.runJumpdestRemover = true;
+	settings.runPeephole = true;
+	settings.runDeduplicate = true;
+	settings.runCSE = true;
+	settings.runConstantOptimiser = true;
+	settings.expectedExecutionsPerDeployment = OptimiserSettings{}.expectedExecutionsPerDeployment;
+
+	auto const evmVersion = CommonOptions::get().evmVersion();
+	Assembly main{evmVersion, false, {}};
+	AssemblyPointer sub = std::make_shared<Assembly>(evmVersion, true, std::string{});
 
 	sub->append(u256(1));
 	auto t1 = sub->newTag();
@@ -1228,12 +1369,12 @@ BOOST_AUTO_TEST_CASE(jumpdest_removal_subassemblies)
 	sub->append(t4.pushTag());
 	sub->append(Instruction::JUMP);
 
-	size_t subId = static_cast<size_t>(main.appendSubroutine(sub).data());
+	SubAssemblyID subId{main.appendSubroutine(sub).data()};
 	main.append(t1.toSubAssemblyTag(subId));
 	main.append(t1.toSubAssemblyTag(subId));
 	main.append(u256(8));
 
-	main.optimise(true, solidity::test::CommonOptions::get().evmVersion(), false, 200);
+	main.optimise(settings);
 
 	AssemblyItems expectationMain{
 		AssemblyItem(PushSubSize, 0),
@@ -1275,6 +1416,135 @@ BOOST_AUTO_TEST_CASE(cse_sub_zero)
 		Instruction::SWAP1,
 		Instruction::SUB
 	});
+}
+
+BOOST_AUTO_TEST_CASE(cse_simple_verbatim)
+{
+	auto verbatim = AssemblyItem{bytes{1, 2, 3, 4, 5}, 0, 0};
+	AssemblyItems input{verbatim};
+	checkCSE(input, input);
+	checkFullCSE(input, input);
+}
+
+BOOST_AUTO_TEST_CASE(cse_mload_pop)
+{
+	AssemblyItems input{
+		u256(1000),
+		Instruction::MLOAD,
+		Instruction::POP,
+	};
+
+	AssemblyItems output{
+	};
+
+	checkCSE(input, output);
+	checkFullCSE(input, output);
+}
+
+BOOST_AUTO_TEST_CASE(cse_verbatim_mload)
+{
+	auto verbatim = AssemblyItem{bytes{1, 2, 3, 4, 5}, 0, 0};
+	AssemblyItems input{
+		u256(1000),
+		Instruction::MLOAD, // Should not be removed
+		Instruction::POP,
+		verbatim,
+		u256(1000),
+		Instruction::MLOAD, // Should not be removed
+		Instruction::POP,
+	};
+
+	checkFullCSE(input, input);
+}
+
+BOOST_AUTO_TEST_CASE(cse_sload_verbatim_dup)
+{
+	auto verbatim = AssemblyItem{bytes{1, 2, 3, 4, 5}, 0, 0};
+	AssemblyItems input{
+		u256(0),
+		Instruction::SLOAD,
+		u256(0),
+		Instruction::SLOAD,
+		verbatim
+	};
+
+	AssemblyItems output{
+		u256(0),
+		Instruction::SLOAD,
+		Instruction::DUP1,
+		verbatim
+	};
+
+	checkCSE(input, output);
+	checkFullCSE(input, output);
+}
+
+BOOST_AUTO_TEST_CASE(cse_verbatim_sload_sideeffect)
+{
+	auto verbatim = AssemblyItem{bytes{1, 2, 3, 4, 5}, 0, 0};
+	AssemblyItems input{
+		u256(0),
+		Instruction::SLOAD,
+		verbatim,
+		u256(0),
+		Instruction::SLOAD,
+	};
+
+	checkFullCSE(input, input);
+}
+
+BOOST_AUTO_TEST_CASE(cse_verbatim_eq)
+{
+	auto verbatim = AssemblyItem{bytes{1, 2, 3, 4, 5}, 0, 0};
+	AssemblyItems input{
+		u256(0),
+		Instruction::SLOAD,
+		verbatim,
+		Instruction::DUP1,
+		Instruction::EQ
+	};
+
+	checkFullCSE(input, input);
+}
+
+BOOST_AUTO_TEST_CASE(verbatim_knownstate)
+{
+	KnownState state = createInitialState(AssemblyItems{
+			Instruction::DUP1,
+			Instruction::DUP2,
+			Instruction::DUP3,
+			Instruction::DUP4
+		});
+	std::map<int, unsigned> const& stackElements = state.stackElements();
+
+	BOOST_CHECK(state.stackHeight() == 4);
+	// One more than stack height because of the initial unknown element.
+	BOOST_CHECK(stackElements.size() == 5);
+	BOOST_CHECK(stackElements.count(0));
+	unsigned initialElement = stackElements.at(0);
+	// Check if all the DUPs were correctly matched to the same class.
+	for (auto const& height: {1, 2, 3, 4})
+		BOOST_CHECK(stackElements.at(height) == initialElement);
+
+	auto verbatim2i5o = AssemblyItem{bytes{1, 2, 3, 4, 5}, 2, 5};
+	state.feedItem(verbatim2i5o);
+
+	BOOST_CHECK(state.stackHeight() == 7);
+	// Stack elements
+	// Before verbatim: {{0, x}, {1, x}, {2, x}, {3, x}, {4, x}}
+	// After verbatim: {{0, x}, {1, x}, {2, x}, {3, a}, {4, b}, {5, c}, {6, d}, {7, e}}
+	BOOST_CHECK(stackElements.size() == 8);
+
+	for (auto const& height: {1, 2})
+		BOOST_CHECK(stackElements.at(height) == initialElement);
+
+	for (auto const& height: {3, 4, 5, 6, 7})
+		BOOST_CHECK(stackElements.at(height) != initialElement);
+
+	for (auto const& height1: {3, 4, 5, 6, 7})
+		for (auto const& height2: {3, 4, 5, 6, 7})
+			if (height1 < height2)
+				BOOST_CHECK(stackElements.at(height1) != stackElements.at(height2));
 }
 
 BOOST_AUTO_TEST_CASE(cse_remove_redundant_shift_masking)
@@ -1357,7 +1627,7 @@ BOOST_AUTO_TEST_CASE(cse_remove_redundant_shift_masking)
 
 BOOST_AUTO_TEST_CASE(cse_remove_unwanted_masking_of_address)
 {
-	vector<Instruction> ops{
+	std::vector<Instruction> ops{
 		Instruction::ADDRESS,
 		Instruction::CALLER,
 		Instruction::ORIGIN,
@@ -1466,6 +1736,315 @@ BOOST_AUTO_TEST_CASE(cse_replace_too_large_shift)
 		Instruction::SHR
 	});
 }
+
+BOOST_AUTO_TEST_CASE(cse_dup)
+{
+	AssemblyItems input{
+		u256(0),
+		Instruction::DUP1,
+		Instruction::REVERT
+	};
+	AssemblyItems output = input;
+
+	checkCSE(input, output);
+	checkFullCSE(input, output);
+}
+
+BOOST_AUTO_TEST_CASE(cse_push0)
+{
+	AssemblyItems input{
+		u256(0),
+		u256(0),
+		Instruction::REVERT
+	};
+	AssemblyItems output{
+		u256(0),
+		Instruction::DUP1,
+		Instruction::REVERT
+	};
+	// The CSE has a rule to replace with DUP1 PUSH0
+	checkCSE(input, output);
+
+	// The full handling by the compiler (Assembly::optimiseInternal)
+	// will not choose to replace the pattern, because the new size is the same as the old one
+	output = input;
+	checkFullCSE(input, output);
+}
+
+BOOST_AUTO_TEST_CASE(inliner)
+{
+	AssemblyItem jumpInto{Instruction::JUMP};
+	jumpInto.setJumpType(AssemblyItem::JumpType::IntoFunction);
+	AssemblyItem jumpOutOf{Instruction::JUMP};
+	jumpOutOf.setJumpType(AssemblyItem::JumpType::OutOfFunction);
+	AssemblyItems items{
+		AssemblyItem(PushTag, 1),
+		AssemblyItem(PushTag, 2),
+		jumpInto,
+		AssemblyItem(Tag, 1),
+		Instruction::STOP,
+		AssemblyItem(Tag, 2),
+		Instruction::CALLVALUE,
+		Instruction::SWAP1,
+		jumpOutOf,
+	};
+	AssemblyItems expectation{
+		AssemblyItem(PushTag, 1),
+		Instruction::CALLVALUE,
+		Instruction::SWAP1,
+		Instruction::JUMP,
+		AssemblyItem(Tag, 1),
+		Instruction::STOP,
+		AssemblyItem(Tag, 2),
+		Instruction::CALLVALUE,
+		Instruction::SWAP1,
+		jumpOutOf,
+	};
+	Inliner{items, {}, Assembly::OptimiserSettings{}.expectedExecutionsPerDeployment, false, {}}.optimise();
+	BOOST_CHECK_EQUAL_COLLECTIONS(
+		items.begin(), items.end(),
+		expectation.begin(), expectation.end()
+	);
+}
+
+
+BOOST_AUTO_TEST_CASE(inliner_no_inline_type)
+{
+	// Will not inline due to jump types.
+	AssemblyItems items{
+		AssemblyItem(PushTag, 1),
+		AssemblyItem(PushTag, 2),
+		Instruction::JUMP,
+		AssemblyItem(Tag, 1),
+		Instruction::STOP,
+		AssemblyItem(Tag, 2),
+		Instruction::CALLVALUE,
+		Instruction::SWAP1,
+		Instruction::JUMP,
+	};
+	Inliner{items, {}, Assembly::OptimiserSettings{}.expectedExecutionsPerDeployment, false, {}}.optimise();
+	BOOST_CHECK_EQUAL_COLLECTIONS(
+		items.begin(), items.end(),
+		items.begin(), items.end()
+	);
+}
+
+BOOST_AUTO_TEST_CASE(inliner_no_inline)
+{
+	AssemblyItems items{
+		AssemblyItem(PushTag, 1),
+		Instruction::JUMP,
+		AssemblyItem(Tag, 1),
+		Instruction::CALLVALUE,
+		Instruction::JUMPI,
+		Instruction::JUMP,
+	};
+	AssemblyItems expectation{
+		AssemblyItem(PushTag, 1),
+		Instruction::JUMP,
+		AssemblyItem(Tag, 1),
+		Instruction::CALLVALUE,
+		Instruction::JUMPI,
+		Instruction::JUMP,
+	};
+	Inliner{items, {}, Assembly::OptimiserSettings{}.expectedExecutionsPerDeployment, false, {}}.optimise();
+	BOOST_CHECK_EQUAL_COLLECTIONS(
+		items.begin(), items.end(),
+		expectation.begin(), expectation.end()
+	);
+}
+
+
+BOOST_AUTO_TEST_CASE(inliner_single_jump)
+{
+	AssemblyItem jumpInto{Instruction::JUMP};
+	jumpInto.setJumpType(AssemblyItem::JumpType::IntoFunction);
+	AssemblyItem jumpOutOf{Instruction::JUMP};
+	jumpOutOf.setJumpType(AssemblyItem::JumpType::OutOfFunction);
+	AssemblyItems items{
+		AssemblyItem(PushTag, 1),
+		AssemblyItem(PushTag, 2),
+		jumpInto,
+		AssemblyItem(Tag, 1),
+		Instruction::STOP,
+		AssemblyItem(Tag, 2),
+		jumpOutOf,
+	};
+	AssemblyItems expectation{
+		AssemblyItem(PushTag, 1),
+		Instruction::JUMP,
+		AssemblyItem(Tag, 1),
+		Instruction::STOP,
+		AssemblyItem(Tag, 2),
+		jumpOutOf,
+	};
+	Inliner{items, {}, Assembly::OptimiserSettings{}.expectedExecutionsPerDeployment, false, {}}.optimise();
+	BOOST_CHECK_EQUAL_COLLECTIONS(
+		items.begin(), items.end(),
+		expectation.begin(), expectation.end()
+	);
+}
+
+BOOST_AUTO_TEST_CASE(inliner_end_of_bytecode)
+{
+	AssemblyItem jumpInto{Instruction::JUMP};
+	jumpInto.setJumpType(AssemblyItem::JumpType::IntoFunction);
+	// Cannot inline, since the block at Tag_2 does not end in a jump.
+	AssemblyItems items{
+		AssemblyItem(PushTag, 1),
+		AssemblyItem(PushTag, 2),
+		jumpInto,
+		AssemblyItem(Tag, 1),
+		Instruction::STOP,
+		AssemblyItem(Tag, 2),
+	};
+	Inliner{items, {}, Assembly::OptimiserSettings{}.expectedExecutionsPerDeployment, false, {}}.optimise();
+	BOOST_CHECK_EQUAL_COLLECTIONS(
+		items.begin(), items.end(),
+		items.begin(), items.end()
+	);
+}
+
+
+BOOST_AUTO_TEST_CASE(inliner_cse_break)
+{
+	AssemblyItem jumpInto{Instruction::JUMP};
+	jumpInto.setJumpType(AssemblyItem::JumpType::IntoFunction);
+	AssemblyItem jumpOutOf{Instruction::JUMP};
+	jumpOutOf.setJumpType(AssemblyItem::JumpType::OutOfFunction);
+	// Could be inlined, but we only consider non-CSE-breaking blocks ending in JUMP so far.
+	AssemblyItems items{
+		AssemblyItem(PushTag, 1),
+		AssemblyItem(PushTag, 2),
+		jumpInto,
+		AssemblyItem(Tag, 1),
+		Instruction::STOP,
+		AssemblyItem(Tag, 2),
+		Instruction::STOP, // CSE breaking instruction
+		jumpOutOf
+	};
+	Inliner{items, {}, Assembly::OptimiserSettings{}.expectedExecutionsPerDeployment, false, {}}.optimise();
+	BOOST_CHECK_EQUAL_COLLECTIONS(
+		items.begin(), items.end(),
+		items.begin(), items.end()
+	);
+}
+
+BOOST_AUTO_TEST_CASE(inliner_stop)
+{
+	AssemblyItems items{
+		AssemblyItem(PushTag, 1),
+		Instruction::JUMP,
+		AssemblyItem(Tag, 1),
+		Instruction::STOP
+	};
+	AssemblyItems expectation{
+		Instruction::STOP,
+		AssemblyItem(Tag, 1),
+		Instruction::STOP
+	};
+	Inliner{items, {}, Assembly::OptimiserSettings{}.expectedExecutionsPerDeployment, false, {}}.optimise();
+	BOOST_CHECK_EQUAL_COLLECTIONS(
+		items.begin(), items.end(),
+		expectation.begin(), expectation.end()
+	);
+}
+
+BOOST_AUTO_TEST_CASE(inliner_stop_jumpi)
+{
+	// Because of `jumpi`, will not be inlined.
+	AssemblyItems items{
+		u256(1),
+		AssemblyItem(PushTag, 1),
+		Instruction::JUMPI,
+		AssemblyItem(Tag, 1),
+		Instruction::STOP
+	};
+	AssemblyItems expectation = items;
+	Inliner{items, {}, Assembly::OptimiserSettings{}.expectedExecutionsPerDeployment, false, {}}.optimise();
+	BOOST_CHECK_EQUAL_COLLECTIONS(
+		items.begin(), items.end(),
+		expectation.begin(), expectation.end()
+	);
+}
+
+BOOST_AUTO_TEST_CASE(inliner_revert)
+{
+	AssemblyItems items{
+		AssemblyItem(PushTag, 1),
+		Instruction::JUMP,
+		AssemblyItem(Tag, 1),
+		u256(0),
+		Instruction::DUP1,
+		Instruction::REVERT
+	};
+	AssemblyItems expectation{
+		u256(0),
+		Instruction::DUP1,
+		Instruction::REVERT,
+		AssemblyItem(Tag, 1),
+		u256(0),
+		Instruction::DUP1,
+		Instruction::REVERT
+	};
+
+	Inliner{items, {}, Assembly::OptimiserSettings{}.expectedExecutionsPerDeployment, false, {}}.optimise();
+	BOOST_CHECK_EQUAL_COLLECTIONS(
+		items.begin(), items.end(),
+		expectation.begin(), expectation.end()
+	);
+}
+
+BOOST_AUTO_TEST_CASE(inliner_revert_push0)
+{
+	// Inlining this without PUSH0 would increase data gas (5 bytes v/s 4 bytes), therefore, it would be skipped.
+	// However, with PUSH0 it is inlined (3 bytes vs 4 bytes).
+	AssemblyItems items{
+		AssemblyItem(PushTag, 1),
+		Instruction::JUMP,
+		AssemblyItem(Tag, 1),
+		u256(0),
+		u256(0),
+		Instruction::REVERT
+	};
+	AssemblyItems expectation{
+		u256(0),
+		u256(0),
+		Instruction::REVERT,
+		AssemblyItem(Tag, 1),
+		u256(0),
+		u256(0),
+		Instruction::REVERT
+	};
+
+	Inliner{items, {}, Assembly::OptimiserSettings{}.expectedExecutionsPerDeployment, false, {}}.optimise();
+	BOOST_CHECK_EQUAL_COLLECTIONS(
+		items.begin(), items.end(),
+		expectation.begin(), expectation.end()
+	);
+}
+
+BOOST_AUTO_TEST_CASE(inliner_invalid)
+{
+	AssemblyItems items{
+		AssemblyItem(PushTag, 1),
+		Instruction::JUMP,
+		AssemblyItem(Tag, 1),
+		Instruction::INVALID
+	};
+
+	AssemblyItems expectation = {
+		Instruction::INVALID,
+		AssemblyItem(Tag, 1),
+		Instruction::INVALID
+	};
+	Inliner{items, {}, Assembly::OptimiserSettings{}.expectedExecutionsPerDeployment, false, {}}.optimise();
+	BOOST_CHECK_EQUAL_COLLECTIONS(
+		items.begin(), items.end(),
+		expectation.begin(), expectation.end()
+	);
+}
+
 
 BOOST_AUTO_TEST_SUITE_END()
 

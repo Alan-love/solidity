@@ -1,6 +1,10 @@
 object "a" {
   code {}
 }
+// ====
+// EVMVersion: >=constantinople
+// outputs: Assembly
 // ----
 // Assembly:
-// -- empty bytecode --
+//     /* "source":22:29   */
+//   stop

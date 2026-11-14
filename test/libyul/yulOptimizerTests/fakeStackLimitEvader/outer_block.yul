@@ -3,6 +3,7 @@
     let $x := 42
     sstore(42, $x)
 }
+// ====
 // ----
 // step: fakeStackLimitEvader
 //

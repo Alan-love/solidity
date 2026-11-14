@@ -22,11 +22,12 @@
 #pragma once
 
 #include <libyul/optimiser/OptimiserStep.h>
+#include <libyul/backends/evm/StackLayoutGenerator.h>
 
 namespace solidity::yul
 {
 
-struct Object;
+class Object;
 
 /**
  * Optimisation stage that assigns memory offsets to variables that would become unreachable if
@@ -46,7 +47,9 @@ struct Object;
  *
  * Finally, the StackToMemoryMover is called to actually move the variables to their offsets in memory.
  *
- * Prerequisite: Disambiguator
+ * Prerequisite: Disambiguator. Memory offsets are assigned to variables by name only, without regard
+ * to which function they belong to. If a variable name were shared between functions that can be live
+ * at the same time, both would silently be moved to the same memory slot, corrupting each other.
  */
 class StackLimitEvader
 {
@@ -58,8 +61,27 @@ public:
 	/// are contained in a recursive function.
 	static void run(
 		OptimiserStepContext& _context,
-		Object& _object,
-		std::map<YulString, std::set<YulString>> const& _unreachableVariables
+		Block& _astRoot,
+		std::map<YulName, std::vector<YulName>> const& _unreachableVariables
+	);
+	/// @a _stackTooDeepErrors can be determined by the StackLayoutGenerator.
+	/// Can only be run on the EVM dialect with objects.
+	/// Abort and do nothing, if no ``memoryguard`` call or several ``memoryguard`` calls
+	/// with non-matching arguments are found, or if any of the @a _stackTooDeepErrors
+	/// are contained in a recursive function.
+	static void run(
+		OptimiserStepContext& _context,
+		Block& _astRoot,
+		std::map<YulName, std::vector<StackLayoutGenerator::StackTooDeep>> const& _stackTooDeepErrors
+	);
+	/// Determines stack too deep errors using the appropriate code generation backend.
+	/// Can only be run on the EVM dialect with objects.
+	/// Abort and do nothing, if no ``memoryguard`` call or several ``memoryguard`` calls
+	/// with non-matching arguments are found, or if any of the unreachable variables
+	/// are contained in a recursive function.
+	static Block run(
+		OptimiserStepContext& _context,
+		Object const& _object
 	);
 };
 

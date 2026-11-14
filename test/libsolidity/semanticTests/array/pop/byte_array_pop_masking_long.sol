@@ -7,8 +7,9 @@ contract c {
         return data;
     }
 }
-
-// ====
-// compileViaYul: also
 // ----
 // test() -> 0x20, 33, 0x303030303030303030303030303030303030303030303030303030303030303, 0x0300000000000000000000000000000000000000000000000000000000000000
+// gas irOptimized: 106759
+// gas legacy: 121252
+// gas legacyOptimized: 120370
+// gas ssaCFGOptimized: 106673

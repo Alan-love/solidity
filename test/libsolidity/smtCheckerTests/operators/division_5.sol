@@ -1,7 +1,6 @@
-pragma experimental SMTChecker;
 contract C {
-	function mul(uint256 a, uint256 b) internal pure returns (uint256) {
-		uint256 c;
+	function mul(uint8 a, uint8 b) internal pure returns (uint8) {
+		uint8 c;
 		if (a != 0) {
 			c = a * b;
 			require(c / a == b);
@@ -9,4 +8,8 @@ contract C {
 		return c;
 	}
 }
+// ====
+// SMTEngine: all
 // ----
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.
+// Warning 6838: (129-139): BMC: Condition is always true.

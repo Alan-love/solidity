@@ -22,6 +22,8 @@
 #include <test/TestCase.h>
 #include <liblangutil/Exceptions.h>
 
+#include <libsolidity/interface/OptimiserSettings.h>
+
 #include <iosfwd>
 #include <string>
 #include <vector>
@@ -30,7 +32,7 @@
 namespace solidity::frontend::test
 {
 
-class GasTest: AnalysisFramework, public TestCase
+class GasTest: AnalysisFramework, public EVMVersionRestrictedTestCase
 {
 public:
 	static std::unique_ptr<TestCase> create(Config const& _config)
@@ -39,15 +41,17 @@ public:
 
 	TestResult run(std::ostream& _stream, std::string const& _linePrefix = "", bool _formatted = false) override;
 
-	void printSource(std::ostream &_stream, std::string const &_linePrefix = "", bool _formatted = false) const override;
 	void printUpdatedExpectations(std::ostream& _stream, std::string const& _linePrefix) const override;
+
+protected:
+	void setupCompiler(CompilerStack& _compiler) override;
 
 private:
 	void parseExpectations(std::istream& _stream);
 
 	bool m_optimise = false;
 	bool m_optimiseYul = false;
-	size_t m_optimiseRuns = 200;
+	size_t m_optimiseRuns = OptimiserSettings{}.expectedExecutionsPerDeployment;
 	std::map<std::string, std::map<std::string, std::string>> m_expectations;
 };
 

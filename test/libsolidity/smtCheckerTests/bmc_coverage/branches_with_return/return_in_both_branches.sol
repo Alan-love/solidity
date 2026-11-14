@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract C {
 
 	function test() public pure {
@@ -20,4 +18,6 @@ contract C {
 // ====
 // SMTEngine: bmc
 // ----
-// Warning 5740: (265-273): Unreachable code.
+// Warning 5740: (232-240): Unreachable code.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.
+// Info 6002: BMC: 2 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.

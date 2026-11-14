@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract C
 {
 	function f() public payable {
@@ -21,6 +19,11 @@ contract C
 		assert(msg.data[3] == 0x8f);
 	}
 }
+// ====
+// SMTEngine: all
+// SMTIgnoreCex: yes
 // ----
-// Warning 6328: (153-180): CHC: Assertion violation happens here.\nCounterexample:\n\n\n\n\nTransaction trace:\nconstructor()\nf()
-// Warning 6328: (500-527): CHC: Assertion violation happens here.\nCounterexample:\n\n\n\n\nTransaction trace:\nconstructor()\ng()
+// Warning 6328: (120-147): CHC: Assertion violation happens here.\nCounterexample:\n\n\nTransaction trace:\nC.constructor()\nC.f(){ msg.data: [0x26, 0x12, 0x1f, 0xf0], msg.value: 19 }
+// Warning 6328: (467-494): CHC: Assertion violation happens here.\nCounterexample:\n\n\nTransaction trace:\nC.constructor()\nC.g(){ msg.data: [0xe2, 0x17, 0x9b, 0x8e], msg.value: 19 }
+// Info 1391: CHC: 16 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

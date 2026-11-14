@@ -12,7 +12,6 @@ contract C {
     }
 }
 // ====
-// compileViaYul: also
 // EVMVersion: >=tangerineWhistle
 // ----
 // f() -> true

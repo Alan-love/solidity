@@ -30,7 +30,8 @@
 #include <liblangutil/SourceLocation.h>
 #include <libsolutil/StringUtils.h>
 
-#include <boost/range/adaptor/filtered.hpp>
+#include <range/v3/range/conversion.hpp>
+#include <range/v3/view/filter.hpp>
 
 namespace solidity::langutil
 {
@@ -63,12 +64,16 @@ public:
 		SecondarySourceLocation const& _secondaryLocation
 	);
 
+	void info(ErrorId _error, SourceLocation const& _location, std::string const& _description);
+
 	void error(
 		ErrorId _error,
 		Error::Type _type,
 		SourceLocation const& _location,
 		std::string const& _description
 	);
+
+	void info(ErrorId _error, std::string const& _description);
 
 	void declarationError(
 		ErrorId _error,
@@ -82,6 +87,7 @@ public:
 	void fatalDeclarationError(ErrorId _error, SourceLocation const& _location, std::string const& _description);
 
 	void parserError(ErrorId _error, SourceLocation const& _location, std::string const& _description);
+	void parserError(ErrorId _error, SourceLocation const& _location, SecondarySourceLocation const& _secondaryLocation, std::string const& _description);
 
 	void fatalParserError(ErrorId _error, SourceLocation const& _location, std::string const& _description);
 
@@ -102,9 +108,8 @@ public:
 		std::initializer_list<std::string> const descs = { _descriptions... };
 		solAssert(descs.size() > 0, "Need error descriptions!");
 
-		auto filterEmpty = boost::adaptors::filtered([](std::string const& _s) { return !_s.empty(); });
-
-		std::string errorStr = util::joinHumanReadable(descs | filterEmpty, " ");
+		auto nonEmpty = [](std::string const& _s) { return !_s.empty(); };
+		std::string errorStr = util::joinHumanReadable(descs | ranges::views::filter(nonEmpty) | ranges::to_vector, " ");
 
 		error(_error, Error::Type::TypeError, _location, errorStr);
 	}
@@ -112,20 +117,30 @@ public:
 	void fatalTypeError(ErrorId _error, SourceLocation const& _location, std::string const& _description);
 	void fatalTypeError(ErrorId _error, SourceLocation const& _location, SecondarySourceLocation const& _secondLocation, std::string const& _description);
 
-	void docstringParsingError(ErrorId _error, std::string const& _description);
 	void docstringParsingError(ErrorId _error, SourceLocation const& _location, std::string const& _description);
+
+	void unimplementedFeatureError(ErrorId _error, SourceLocation const& _location, std::string const& _description);
+
+	void codeGenerationError(ErrorId _error, SourceLocation const& _location, std::string const& _description);
+	void codeGenerationError(Error const& _error);
 
 	ErrorList const& errors() const;
 
 	void clear();
 
-	/// @returns true iff there is any error (ignores warnings).
+	/// @returns true iff there is any error (ignores warnings and infos).
 	bool hasErrors() const
 	{
 		return m_errorCount > 0;
 	}
 
-	/// @returns the number of errors (ignores warnings).
+	/// @returns true if there is any error, warning or info.
+	bool hasErrorsWarningsOrInfos() const
+	{
+		return m_errorCount + m_warningCount + m_infoCount > 0;
+	}
+
+	/// @returns the number of errors (ignores warnings and infos).
 	unsigned errorCount() const
 	{
 		return m_errorCount;
@@ -133,6 +148,9 @@ public:
 
 	// @returns true if the maximum error count has been reached.
 	bool hasExcessiveErrors() const;
+
+	/// @returns true if there is at least one occurrence of error
+	bool hasError(ErrorId _errorId) const;
 
 	class ErrorWatcher
 	{
@@ -184,9 +202,11 @@ private:
 
 	unsigned m_errorCount = 0;
 	unsigned m_warningCount = 0;
+	unsigned m_infoCount = 0;
 
 	unsigned const c_maxWarningsAllowed = 256;
 	unsigned const c_maxErrorsAllowed = 256;
+	unsigned const c_maxInfosAllowed = 256;
 };
 
 }

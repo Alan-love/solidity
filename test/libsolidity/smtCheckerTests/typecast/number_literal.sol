@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract C {
   function f() public pure {
     uint x = 1234;
@@ -10,7 +8,7 @@ contract C {
   }
   function g() public pure {
     uint a = uint(0);
-    uint b = uint(-1);
+    uint b = type(uint256).max;
     uint c = 115792089237316195423570985008687907853269984665640564039457584007913129639935;
     int d = -1;
     uint e = uint(d);
@@ -20,7 +18,7 @@ contract C {
   }
   function h() public pure {
     uint32 a = uint32(0);
-    uint32 b = uint32(-1);
+    uint32 b = type(uint32).max;
     uint32 c = 4294967295;
     int32 d = -1;
     uint32 e = uint32(d);
@@ -29,3 +27,8 @@ contract C {
     assert(b == e);
   }
 }
+// ====
+// SMTEngine: all
+// ----
+// Info 1391: CHC: 9 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

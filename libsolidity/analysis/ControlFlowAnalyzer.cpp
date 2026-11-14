@@ -20,36 +20,53 @@
 
 #include <liblangutil/SourceLocation.h>
 #include <libsolutil/Algorithms.h>
-#include <boost/range/algorithm/sort.hpp>
 
-using namespace std;
+#include <range/v3/algorithm/sort.hpp>
+
+#include <functional>
+
+using namespace std::placeholders;
 using namespace solidity::langutil;
 using namespace solidity::frontend;
 
-bool ControlFlowAnalyzer::analyze(ASTNode const& _astRoot)
+
+bool ControlFlowAnalyzer::run()
 {
-	_astRoot.accept(*this);
-	return Error::containsOnlyWarnings(m_errorReporter.errors());
+	for (auto& [pair, flow]: m_cfg.allFunctionFlows())
+		analyze(*pair.function, pair.contract, *flow);
+
+	return !Error::containsErrors(m_errorReporter.errors());
 }
 
-bool ControlFlowAnalyzer::visit(FunctionDefinition const& _function)
+void ControlFlowAnalyzer::analyze(FunctionDefinition const& _function, ContractDefinition const* _contract, FunctionFlow const& _flow)
 {
-	if (_function.isImplemented())
-	{
-		auto const& functionFlow = m_cfg.functionFlow(_function);
-		checkUninitializedAccess(functionFlow.entry, functionFlow.exit, _function.body().statements().empty());
-		checkUnreachable(functionFlow.entry, functionFlow.exit, functionFlow.revert, functionFlow.transactionReturn);
-	}
-	return false;
+	if (!_function.isImplemented())
+		return;
+
+	std::optional<std::string> mostDerivedContractName;
+
+	// The name of the most derived contract only required if it differs from
+	// the functions contract
+	if (_contract && _contract != _function.annotation().contract)
+		mostDerivedContractName = _contract->name();
+
+	checkUninitializedAccess(
+		_flow.entry,
+		_flow.exit,
+		_function.body().statements().empty(),
+		mostDerivedContractName
+	);
+	checkUnreachable(_flow.entry, _flow.exit, _flow.revert, _flow.transactionReturn);
 }
 
-void ControlFlowAnalyzer::checkUninitializedAccess(CFGNode const* _entry, CFGNode const* _exit, bool _emptyBody) const
+
+void ControlFlowAnalyzer::checkUninitializedAccess(CFGNode const* _entry, CFGNode const* _exit, bool _emptyBody, std::optional<std::string> _contractName)
 {
 	struct NodeInfo
 	{
-		set<VariableDeclaration const*> unassignedVariablesAtEntry;
-		set<VariableDeclaration const*> unassignedVariablesAtExit;
-		set<VariableOccurrence const*> uninitializedVariableAccesses;
+		std::set<VariableDeclaration const*> unassignedVariablesAtEntry;
+		std::set<VariableDeclaration const*> unassignedVariablesAtExit;
+		std::set<VariableOccurrence const*> uninitializedVariableAccesses;
 		/// Propagate the information from another node to this node.
 		/// To be used to propagate information from a node to its exit nodes.
 		/// Returns true, if new variables were added and thus the current node has
@@ -57,17 +74,17 @@ void ControlFlowAnalyzer::checkUninitializedAccess(CFGNode const* _entry, CFGNod
 		bool propagateFrom(NodeInfo const& _entryNode)
 		{
 			size_t previousUnassignedVariablesAtEntry = unassignedVariablesAtEntry.size();
-			size_t previousUninitializedVariableAccessess = uninitializedVariableAccesses.size();
+			size_t previousUninitializedVariableAccesses = uninitializedVariableAccesses.size();
 			unassignedVariablesAtEntry += _entryNode.unassignedVariablesAtExit;
 			uninitializedVariableAccesses += _entryNode.uninitializedVariableAccesses;
 			return
 				unassignedVariablesAtEntry.size() > previousUnassignedVariablesAtEntry ||
-				uninitializedVariableAccesses.size() > previousUninitializedVariableAccessess
+				uninitializedVariableAccesses.size() > previousUninitializedVariableAccesses
 			;
 		}
 	};
-	map<CFGNode const*, NodeInfo> nodeInfos;
-	set<CFGNode const*> nodesToTraverse;
+	std::map<CFGNode const*, NodeInfo> nodeInfos;
+	std::set<CFGNode const*> nodesToTraverse;
 	nodesToTraverse.insert(_entry);
 
 	// Walk all paths starting from the nodes in ``nodesToTraverse`` until ``NodeInfo::propagateFrom``
@@ -110,18 +127,21 @@ void ControlFlowAnalyzer::checkUninitializedAccess(CFGNode const* _entry, CFGNod
 
 		// Propagate changes to all exits and queue them for traversal, if needed.
 		for (auto const& exit: currentNode->exits)
-			if (nodeInfos[exit].propagateFrom(nodeInfo))
+			if (
+				auto exists = util::valueOrNullptr(nodeInfos, exit);
+				nodeInfos[exit].propagateFrom(nodeInfo) || !exists
+			)
 				nodesToTraverse.insert(exit);
 	}
 
 	auto const& exitInfo = nodeInfos[_exit];
 	if (!exitInfo.uninitializedVariableAccesses.empty())
 	{
-		vector<VariableOccurrence const*> uninitializedAccessesOrdered(
+		std::vector<VariableOccurrence const*> uninitializedAccessesOrdered(
 			exitInfo.uninitializedVariableAccesses.begin(),
 			exitInfo.uninitializedVariableAccesses.end()
 		);
-		boost::range::sort(
+		ranges::sort(
 			uninitializedAccessesOrdered,
 			[](VariableOccurrence const* lhs, VariableOccurrence const* rhs) -> bool
 			{
@@ -131,36 +151,49 @@ void ControlFlowAnalyzer::checkUninitializedAccess(CFGNode const* _entry, CFGNod
 
 		for (auto const* variableOccurrence: uninitializedAccessesOrdered)
 		{
+			VariableDeclaration const& varDecl = variableOccurrence->declaration();
+
 			SecondarySourceLocation ssl;
 			if (variableOccurrence->occurrence())
-				ssl.append("The variable was declared here.", variableOccurrence->declaration().location());
+				ssl.append("The variable was declared here.", varDecl.location());
 
-			bool isStorage = variableOccurrence->declaration().type()->dataStoredIn(DataLocation::Storage);
-			bool isCalldata = variableOccurrence->declaration().type()->dataStoredIn(DataLocation::CallData);
+			bool isStorage = varDecl.type()->dataStoredIn(DataLocation::Storage);
+			bool isCalldata = varDecl.type()->dataStoredIn(DataLocation::CallData);
 			if (isStorage || isCalldata)
 				m_errorReporter.typeError(
 					3464_error,
 					variableOccurrence->occurrence() ?
 						*variableOccurrence->occurrence() :
-						variableOccurrence->declaration().location(),
+						varDecl.location(),
 					ssl,
 					"This variable is of " +
-					string(isStorage ? "storage" : "calldata") +
+					std::string(isStorage ? "storage" : "calldata") +
 					" pointer type and can be " +
 					(variableOccurrence->kind() == VariableOccurrence::Kind::Return ? "returned" : "accessed") +
 					" without prior assignment, which would lead to undefined behaviour."
 				);
-			else if (!_emptyBody && variableOccurrence->declaration().name().empty())
+			else if (!_emptyBody && varDecl.name().empty())
+			{
+				if (!m_unassignedReturnVarsAlreadyWarnedFor.emplace(&varDecl).second)
+					continue;
+
 				m_errorReporter.warning(
 					6321_error,
-					variableOccurrence->declaration().location(),
-					"Unnamed return variable can remain unassigned. Add an explicit return with value to all non-reverting code paths or name the variable."
+					varDecl.location(),
+					"Unnamed return variable can remain unassigned" +
+					(
+						_contractName.has_value() ?
+						" when the function is called when \"" + _contractName.value() + "\" is the most derived contract." :
+						"."
+					) +
+					" Add an explicit return with value to all non-reverting code paths or name the variable."
 				);
+			}
 		}
 	}
 }
 
-void ControlFlowAnalyzer::checkUnreachable(CFGNode const* _entry, CFGNode const* _exit, CFGNode const* _revert, CFGNode const* _transactionReturn) const
+void ControlFlowAnalyzer::checkUnreachable(CFGNode const* _entry, CFGNode const* _exit, CFGNode const* _revert, CFGNode const* _transactionReturn)
 {
 	// collect all nodes reachable from the entry point
 	std::set<CFGNode const*> reachable = util::BreadthFirstSearch<CFGNode const*>{{_entry}}.run(
@@ -188,6 +221,8 @@ void ControlFlowAnalyzer::checkUnreachable(CFGNode const* _entry, CFGNode const*
 		// Extend the location, as long as the next location overlaps (unreachable is sorted).
 		for (; it != unreachable.end() && it->start <= location.end; ++it)
 			location.end = std::max(location.end, it->end);
-		m_errorReporter.warning(5740_error, location, "Unreachable code.");
+
+		if (m_unreachableLocationsAlreadyWarnedFor.emplace(location).second)
+			m_errorReporter.warning(5740_error, location, "Unreachable code.");
 	}
 }

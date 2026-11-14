@@ -13,8 +13,5 @@ contract D is M.C {
     return super.g() + f() * 10000;
   }
 }
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // g() -> 61337

@@ -33,10 +33,16 @@ contract c {
         return (small.length, large.length);
     }
 }
-// ====
-// compileViaYul: also
 // ----
 // test() -> 0x02000202
-// storage: empty
+// gas irOptimized: 4560465
+// gas legacy: 4536539
+// gas legacyOptimized: 4456732
+// gas ssaCFGOptimized: 4558532
+// storageEmpty -> 1
 // clear() -> 0, 0
-// storage: empty
+// gas irOptimized: 4488716
+// gas legacy: 4407759
+// gas legacyOptimized: 4385068
+// gas ssaCFGOptimized: 4488489
+// storageEmpty -> 1

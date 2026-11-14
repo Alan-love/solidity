@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract C {
 	function f() public pure {
 		int8 x = 1;
@@ -17,5 +15,9 @@ contract C {
 		assert(x == 127);
 	}
 }
+// ====
+// SMTEngine: all
 // ----
-// Warning 6328: (114-128): CHC: Assertion violation happens here.\nCounterexample:\n\n\n\n\nTransaction trace:\nconstructor()\nf()
+// Warning 6328: (81-95): CHC: Assertion violation happens here.\nCounterexample:\n\nx = 0\ny = 0\n\nTransaction trace:\nC.constructor()\nC.f()
+// Info 1391: CHC: 3 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

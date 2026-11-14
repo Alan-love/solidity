@@ -1,4 +1,3 @@
-pragma experimental SMTChecker;
 contract C {
     int[1][20] c;
     function f(bool b) public {
@@ -8,5 +7,18 @@ contract C {
         assert(c[10][0] == 0 || c[10][0] == 1);
     }
 }
+// ====
+// SMTEngine: all
+// SMTIgnoreOS: macos
 // ----
-// Warning 6328: (174-212): CHC: Assertion violation might happen here.
+// Warning 6368: (76-81): CHC: Out of bounds access might happen here.
+// Warning 6368: (76-84): CHC: Out of bounds access might happen here.
+// Warning 6368: (119-124): CHC: Out of bounds access might happen here.
+// Warning 6368: (119-127): CHC: Out of bounds access might happen here.
+// Warning 6368: (149-154): CHC: Out of bounds access might happen here.
+// Warning 6368: (149-157): CHC: Out of bounds access might happen here.
+// Warning 6368: (166-171): CHC: Out of bounds access might happen here.
+// Warning 6368: (166-174): CHC: Out of bounds access might happen here.
+// Warning 6328: (142-180): CHC: Assertion violation might happen here.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.
+// Info 6002: BMC: 1 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.

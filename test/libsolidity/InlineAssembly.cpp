@@ -26,10 +26,11 @@
 
 #include <libsolidity/ast/AST.h>
 
-#include <libyul/AssemblyStack.h>
+#include <libyul/YulStack.h>
 
-#include <liblangutil/Scanner.h>
+#include <liblangutil/DebugInfoSelection.h>
 #include <liblangutil/Exceptions.h>
+#include <liblangutil/Scanner.h>
 #include <liblangutil/SourceReferenceFormatter.h>
 
 #include <libevmasm/Assembly.h>
@@ -41,9 +42,9 @@
 #include <optional>
 #include <string>
 
-using namespace std;
 using namespace solidity::langutil;
 using namespace solidity::yul;
+using namespace solidity::test;
 
 namespace solidity::frontend::test
 {
@@ -52,38 +53,30 @@ namespace
 {
 
 std::optional<Error> parseAndReturnFirstError(
-	string const& _source,
+	std::string const& _source,
 	bool _assemble = false,
 	bool _allowWarnings = true,
-	AssemblyStack::Language _language = AssemblyStack::Language::Assembly,
-	AssemblyStack::Machine _machine = AssemblyStack::Machine::EVM
+	YulStack::Machine _machine = YulStack::Machine::EVM
 )
 {
-	AssemblyStack stack(solidity::test::CommonOptions::get().evmVersion(), _language, solidity::frontend::OptimiserSettings::none());
-	bool success = false;
-	try
-	{
-		success = stack.parseAndAnalyze("", _source);
-		if (success && _assemble)
-			stack.assemble(_machine);
-	}
-	catch (FatalError const&)
-	{
-		BOOST_FAIL("Fatal error leaked.");
-		success = false;
-	}
-	shared_ptr<Error const> error;
+	YulStack stack(
+		solidity::test::CommonOptions::get().evmVersion(),
+		solidity::frontend::OptimiserSettings::none(),
+		DebugInfoSelection::None()
+	);
+	bool success = stack.parseAndAnalyze("", _source);
+	if (success && _assemble)
+		stack.assemble(_machine);
+	std::shared_ptr<Error const> error;
 	for (auto const& e: stack.errors())
 	{
 		if (_allowWarnings && e->type() == Error::Type::Warning)
 			continue;
 		if (error)
-		{
-			string errors;
-			for (auto const& err: stack.errors())
-				errors += SourceReferenceFormatter::formatErrorInformation(*err);
-			BOOST_FAIL("Found more than one error:\n" + errors);
-		}
+			BOOST_FAIL(
+				"Found more than one error:\n" +
+				SourceReferenceFormatter::formatErrorInformation(stack.errors(), stack)
+			);
 		error = e;
 	}
 	if (!success)
@@ -94,60 +87,58 @@ std::optional<Error> parseAndReturnFirstError(
 }
 
 bool successParse(
-	string const& _source,
+	std::string const& _source,
 	bool _assemble = false,
 	bool _allowWarnings = true,
-	AssemblyStack::Language _language = AssemblyStack::Language::Assembly,
-	AssemblyStack::Machine _machine = AssemblyStack::Machine::EVM
+	YulStack::Machine _machine = YulStack::Machine::EVM
 )
 {
-	return !parseAndReturnFirstError(_source, _assemble, _allowWarnings, _language, _machine);
+	return !parseAndReturnFirstError(_source, _assemble, _allowWarnings, _machine);
 }
 
-bool successAssemble(string const& _source, bool _allowWarnings = true, AssemblyStack::Language _language = AssemblyStack::Language::Assembly)
+bool successAssemble(std::string const& _source, bool _allowWarnings = true)
 {
 	return
-		successParse(_source, true, _allowWarnings, _language, AssemblyStack::Machine::EVM) &&
-		successParse(_source, true, _allowWarnings, _language, AssemblyStack::Machine::EVM15);
+		successParse(_source, true, _allowWarnings, YulStack::Machine::EVM);
 }
 
 Error expectError(
 	std::string const& _source,
 	bool _assemble,
-	bool _allowWarnings = false,
-	AssemblyStack::Language _language = AssemblyStack::Language::Assembly
+	bool _allowWarnings = false
 )
 {
 
-	auto error = parseAndReturnFirstError(_source, _assemble, _allowWarnings, _language);
+	auto error = parseAndReturnFirstError(_source, _assemble, _allowWarnings);
 	BOOST_REQUIRE(error);
 	return *error;
 }
 
-void parsePrintCompare(string const& _source, bool _canWarn = false)
+void parsePrintCompare(std::string const& _source, bool _canWarn = false)
 {
-	AssemblyStack stack(solidity::test::CommonOptions::get().evmVersion(), AssemblyStack::Language::Assembly, OptimiserSettings::none());
+	YulStack stack(
+		solidity::test::CommonOptions::get().evmVersion(),
+		OptimiserSettings::none(),
+		DebugInfoSelection::None()
+	);
 	BOOST_REQUIRE(stack.parseAndAnalyze("", _source));
 	if (_canWarn)
-		BOOST_REQUIRE(Error::containsOnlyWarnings(stack.errors()));
+		BOOST_REQUIRE(!Error::containsErrors(stack.errors()));
 	else
-		BOOST_REQUIRE(stack.errors().empty());
-	string expectation = "object \"object\" {\n    code " + boost::replace_all_copy(_source, "\n", "\n    ") + "\n}\n";
+		BOOST_REQUIRE(!Error::hasErrorsWarningsOrInfos(stack.errors()));
+	std::string expectation = "object \"object\" {\n    code " + boost::replace_all_copy(_source, "\n", "\n    ") + "\n}\n";
 	BOOST_CHECK_EQUAL(stack.print(), expectation);
 }
 
 }
 
-#define CHECK_ERROR_LANG(text, assemble, typ, substring, warnings, language) \
+#define CHECK_ERROR(text, assemble, typ, substring, warnings) \
 do \
 { \
-	Error err = expectError((text), (assemble), warnings, (language)); \
+	Error err = expectError((text), (assemble), warnings); \
 	BOOST_CHECK(err.type() == (Error::Type::typ)); \
 	BOOST_CHECK(searchErrorMessage(err, (substring))); \
 } while(0)
-
-#define CHECK_ERROR(text, assemble, typ, substring, warnings) \
-CHECK_ERROR_LANG(text, assemble, typ, substring, warnings, AssemblyStack::Language::Assembly)
 
 #define CHECK_PARSE_ERROR(text, type, substring) \
 CHECK_ERROR(text, false, type, substring, false)
@@ -159,13 +150,13 @@ CHECK_ERROR(text, false, type, substring, false)
 CHECK_ERROR(text, true, type, substring, false)
 
 #define CHECK_STRICT_ERROR(text, type, substring) \
-CHECK_ERROR_LANG(text, false, type, substring, false, AssemblyStack::Language::StrictAssembly)
+CHECK_ERROR(text, false, type, substring, false)
 
 #define CHECK_STRICT_WARNING(text, type, substring) \
-CHECK_ERROR(text, false, type, substring, false, AssemblyStack::Language::StrictAssembly)
+CHECK_ERROR(text, false, type, substring, false)
 
 #define SUCCESS_STRICT(text) \
-do { successParse((text), false, false, AssemblyStack::Language::StrictAssembly); } while (false)
+do { successParse((text), false, false); } while (false)
 
 
 BOOST_AUTO_TEST_SUITE(SolidityInlineAssembly)
@@ -209,14 +200,18 @@ BOOST_AUTO_TEST_CASE(print_string_literals)
 
 BOOST_AUTO_TEST_CASE(print_string_literal_unicode)
 {
-	string source = "{ let x := \"\\u1bac\" }";
-	string parsed = "object \"object\" {\n    code { let x := \"\\xe1\\xae\\xac\" }\n}\n";
-	AssemblyStack stack(solidity::test::CommonOptions::get().evmVersion(), AssemblyStack::Language::Assembly, OptimiserSettings::none());
+	std::string source = "{ let x := \"\\u1bac\" }";
+	std::string parsed = "object \"object\" {\n    code { let x := \"\\xe1\\xae\\xac\" }\n}\n";
+	YulStack stack(
+		solidity::test::CommonOptions::get().evmVersion(),
+		OptimiserSettings::none(),
+		DebugInfoSelection::None()
+	);
 	BOOST_REQUIRE(stack.parseAndAnalyze("", source));
-	BOOST_REQUIRE(stack.errors().empty());
+	BOOST_REQUIRE(!Error::hasErrorsWarningsOrInfos(stack.errors()));
 	BOOST_CHECK_EQUAL(stack.print(), parsed);
 
-	string parsedInner = "{ let x := \"\\xe1\\xae\\xac\" }";
+	std::string parsedInner = "{ let x := \"\\xe1\\xae\\xac\" }";
 	parsePrintCompare(parsedInner);
 }
 
@@ -242,7 +237,7 @@ BOOST_AUTO_TEST_CASE(function_definitions_multiple_args)
 
 BOOST_AUTO_TEST_CASE(function_calls)
 {
-	string source = R"({
+	std::string source = R"({
 	function y()
 	{ }
 	function f(a) -> b
@@ -273,8 +268,8 @@ BOOST_AUTO_TEST_CASE(oversize_string_literals)
 
 BOOST_AUTO_TEST_CASE(magic_variables)
 {
-	CHECK_ASSEMBLE_ERROR("{ pop(this) }", DeclarationError, "Identifier not found");
-	CHECK_ASSEMBLE_ERROR("{ pop(ecrecover) }", DeclarationError, "Identifier not found");
+	CHECK_ASSEMBLE_ERROR("{ pop(this) }", DeclarationError, "Identifier \"this\" not found");
+	CHECK_ASSEMBLE_ERROR("{ pop(ecrecover) }", DeclarationError, "Identifier \"ecrecover\" not found");
 	BOOST_CHECK(successAssemble("{ let ecrecover := 1 pop(ecrecover) }"));
 }
 
@@ -357,12 +352,6 @@ BOOST_AUTO_TEST_CASE(shift_constantinople_warning)
 	CHECK_PARSE_WARNING("{ shl(10, 32) }", TypeError, "The \"shl\" instruction is only available for Constantinople-compatible VMs");
 	CHECK_PARSE_WARNING("{ shr(10, 32) }", TypeError, "The \"shr\" instruction is only available for Constantinople-compatible VMs");
 	CHECK_PARSE_WARNING("{ sar(10, 32) }", TypeError, "The \"sar\" instruction is only available for Constantinople-compatible VMs");
-}
-
-BOOST_AUTO_TEST_CASE(jump_error)
-{
-	CHECK_PARSE_WARNING("{ jump(44) }", DeclarationError, "Function not found.");
-	CHECK_PARSE_WARNING("{ jumpi(44, 2) }", DeclarationError, "Function not found.");
 }
 
 BOOST_AUTO_TEST_SUITE_END() // }}}

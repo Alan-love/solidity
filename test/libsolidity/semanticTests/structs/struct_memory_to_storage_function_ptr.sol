@@ -26,8 +26,9 @@ contract C {
         return x.s.a;
     }
 }
-
-// ====
-// compileViaYul: false
 // ----
 // f() -> 42, 23, 34, 42, 42
+// gas irOptimized: 110679
+// gas legacy: 111990
+// gas legacyOptimized: 110546
+// gas ssaCFGOptimized: 110684

@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract C
 {
 	function f() public pure {
@@ -7,6 +5,8 @@ contract C
 		}
 	}
 }
+// ====
+// SMTEngine: all
 // ----
-// Warning 7737: (76-90): Assertion checker does not support inline assembly.
-// Warning 7737: (76-90): Assertion checker does not support inline assembly.
+// Warning 7737: (43-57): Inline assembly may cause SMTChecker to produce spurious warnings (false positives).
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

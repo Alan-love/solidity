@@ -37,6 +37,7 @@ struct SourceLocation;
 namespace solidity::yul
 {
 
+class NoOutputAssembly;
 
 /**
  * Assembly class that just ignores everything and only performs stack counting.
@@ -45,7 +46,7 @@ namespace solidity::yul
 class NoOutputAssembly: public AbstractAssembly
 {
 public:
-	explicit NoOutputAssembly(bool _evm15 = false): m_evm15(_evm15) { }
+	explicit NoOutputAssembly(langutil::EVMVersion _evmVersion): m_evmVersion(_evmVersion) { }
 	~NoOutputAssembly() override = default;
 
 	void setSourceLocation(langutil::SourceLocation const&) override {}
@@ -56,39 +57,47 @@ public:
 	void appendLabel(LabelID _labelId) override;
 	void appendLabelReference(LabelID _labelId) override;
 	LabelID newLabelId() override;
-	LabelID namedLabel(std::string const& _name) override;
+	LabelID namedLabel(std::string const& _name, size_t _params, size_t _returns, std::optional<size_t> _sourceID) override;
 	void appendLinkerSymbol(std::string const& _name) override;
+	void appendVerbatim(bytes _data, size_t _arguments, size_t _returnVariables) override;
 
 	void appendJump(int _stackDiffAfter, JumpType _jumpType) override;
 	void appendJumpTo(LabelID _labelId, int _stackDiffAfter, JumpType _jumpType) override;
 	void appendJumpToIf(LabelID _labelId, JumpType _jumpType) override;
-	void appendBeginsub(LabelID _labelId, int _arguments) override;
-	void appendJumpsub(LabelID _labelId, int _arguments, int _returns) override;
-	void appendReturnsub(int _returns, int _stackDiffAfter) override;
 
 	void appendAssemblySize() override;
-	std::pair<std::shared_ptr<AbstractAssembly>, SubID> createSubAssembly() override;
+	std::pair<std::shared_ptr<AbstractAssembly>, SubID> createSubAssembly(bool _creation, std::string _name = "") override;
 	void appendDataOffset(std::vector<SubID> const& _subPath) override;
 	void appendDataSize(std::vector<SubID> const& _subPath) override;
 	SubID appendData(bytes const& _data) override;
+
+	void appendToAuxiliaryData(bytes const&) override {}
 
 	void appendImmutable(std::string const& _identifier) override;
 	void appendImmutableAssignment(std::string const& _identifier) override;
 
 	void markAsInvalid() override {}
 
+	langutil::EVMVersion evmVersion() const override { return m_evmVersion; }
+
 private:
-	bool m_evm15 = false; ///< if true, switch to evm1.5 mode
 	int m_stackHeight = 0;
+	langutil::EVMVersion m_evmVersion;
 };
 
 
 /**
  * EVM dialect that does not generate any code.
  */
-struct NoOutputEVMDialect: public EVMDialect
+class NoOutputEVMDialect: public EVMDialect
 {
+public:
 	explicit NoOutputEVMDialect(EVMDialect const& _copyFrom);
+
+	BuiltinFunctionForEVM const& builtin(BuiltinHandle const& _handle) const override;
+
+private:
+	static std::vector<BuiltinFunctionForEVM> defineNoOutputBuiltins();
 };
 
 

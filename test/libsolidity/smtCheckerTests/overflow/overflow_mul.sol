@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract C
 {
 	function f(uint8 x) public pure returns (uint8) {
@@ -12,6 +10,9 @@ contract C
 		return y;
 	}
 }
+// ====
+// SMTEngine: all
 // ----
-// Warning 4984: (120-125): CHC: Overflow (resulting value larger than 255) happens here.\nCounterexample:\n\nx = 100\n = 0\n\nTransaction trace:\nconstructor()\nf(0)
-// Warning 4984: (163-168): CHC: Overflow (resulting value larger than 255) happens here.\nCounterexample:\n\nx = 128\n = 0\n\nTransaction trace:\nconstructor()\nf(0)
+// Warning 4984: (87-92): CHC: Overflow (resulting value larger than 255) happens here.\nCounterexample:\n\nx = 100\n = 0\ny = 0\n\nTransaction trace:\nC.constructor()\nC.f(0)
+// Info 1391: CHC: 3 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

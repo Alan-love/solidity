@@ -22,7 +22,6 @@
 #include <libsolidity/ast/ASTAnnotations.h>
 #include <liblangutil/EVMVersion.h>
 
-#include <boost/noncopyable.hpp>
 #include <list>
 #include <map>
 
@@ -54,11 +53,14 @@ private:
 
 	bool visit(ElementaryTypeName const& _typeName) override;
 	void endVisit(UserDefinedTypeName const& _typeName) override;
+	void endVisit(IdentifierPath const& _identifierPath) override;
 	bool visit(FunctionTypeName const& _typeName) override;
 	void endVisit(Mapping const& _mapping) override;
 	void endVisit(ArrayTypeName const& _typeName) override;
 	void endVisit(VariableDeclaration const& _variable) override;
+	bool visit(EnumDefinition const& _enum) override;
 	bool visit(StructDefinition const& _struct) override;
+	void endVisit(UserDefinedValueTypeDefinition const& _userDefined) override;
 	bool visit(UsingForDirective const& _usingForDirective) override;
 	bool visit(InheritanceSpecifier const& _inheritanceSpecifier) override;
 

@@ -2,8 +2,7 @@
   "absolutePath": "a",
   "id": 2,
   "nodeType": "SourceUnit",
-  "nodes":
-  [
+  "nodes": [
     {
       "abstract": false,
       "baseContracts": [],
@@ -11,9 +10,12 @@
       "contractKind": "contract",
       "id": 1,
       "name": "C",
+      "nameLocation": "9:1:1",
       "nodeType": "ContractDefinition",
       "nodes": [],
-      "src": "0:13:1"
+      "src": "0:13:1",
+      "usedErrors": [],
+      "usedEvents": []
     }
   ],
   "src": "0:14:1"

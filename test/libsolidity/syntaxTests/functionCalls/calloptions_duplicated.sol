@@ -8,6 +8,7 @@ contract C {
     }
 }
 // ====
+// ====
 // EVMVersion: >=constantinople
 // ----
 // TypeError 9886: (78-101): Duplicate option "gas".

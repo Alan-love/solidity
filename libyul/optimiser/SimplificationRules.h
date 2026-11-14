@@ -24,14 +24,14 @@
 #include <libevmasm/SimplificationRule.h>
 
 #include <libyul/ASTForward.h>
-#include <libyul/YulString.h>
+#include <libyul/Builtins.h>
+#include <libyul/YulName.h>
 
 #include <libsolutil/CommonData.h>
+#include <libsolutil/Numeric.h>
 
 #include <liblangutil/EVMVersion.h>
-#include <liblangutil/SourceLocation.h>
-
-#include <boost/noncopyable.hpp>
+#include <liblangutil/DebugData.h>
 
 #include <functional>
 #include <optional>
@@ -39,16 +39,23 @@
 
 namespace solidity::yul
 {
-struct Dialect;
 struct AssignedValue;
+class Dialect;
+class EVMDialect;
 class Pattern;
+
+using DebugData = langutil::DebugData;
 
 /**
  * Container for all simplification rules.
  */
-class SimplificationRules: public boost::noncopyable
+class SimplificationRules
 {
 public:
+	/// Noncopiable.
+	SimplificationRules(SimplificationRules const&) = delete;
+	SimplificationRules& operator=(SimplificationRules const&) = delete;
+
 	using Rule = evmasm::SimplificationRule<Pattern>;
 
 	explicit SimplificationRules(std::optional<langutil::EVMVersion> _evmVersion = std::nullopt);
@@ -59,7 +66,7 @@ public:
 	static Rule const* findFirstMatch(
 		Expression const& _expr,
 		Dialect const& _dialect,
-		std::map<YulString, AssignedValue> const& _ssaValues
+		std::function<AssignedValue const*(YulName)> const& _ssaValues
 	);
 
 	/// Checks whether the rulelist is non-empty. This is usually enforced
@@ -116,7 +123,7 @@ public:
 	bool matches(
 		Expression const& _expr,
 		Dialect const& _dialect,
-		std::map<YulString, AssignedValue> const& _ssaValues
+		std::function<AssignedValue const*(YulName)> const& _ssaValues
 	) const;
 
 	std::vector<Pattern> arguments() const { return m_arguments; }
@@ -128,13 +135,14 @@ public:
 
 	/// Turns this pattern into an actual expression. Should only be called
 	/// for patterns resulting from an action, i.e. with match groups assigned.
-	Expression toExpression(langutil::SourceLocation const& _location) const;
+	Expression toExpression(langutil::DebugData::ConstPtr const& _debugData, EVMDialect const& _dialect) const;
 
 private:
 	Expression const& matchGroupValue() const;
 
 	PatternKind m_kind = PatternKind::Any;
 	evmasm::Instruction m_instruction; ///< Only valid if m_kind is Operation
+	std::optional<BuiltinHandle> mutable m_instructionBuiltinHandle; ///< Builtin handle cache for instructions
 	std::shared_ptr<u256> m_data; ///< Only valid if m_kind is Constant
 	std::vector<Pattern> m_arguments;
 	unsigned m_matchGroup = 0;

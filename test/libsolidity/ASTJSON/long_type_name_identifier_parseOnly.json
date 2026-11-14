@@ -2,8 +2,7 @@
   "absolutePath": "a",
   "id": 16,
   "nodeType": "SourceUnit",
-  "nodes":
-  [
+  "nodes": [
     {
       "abstract": false,
       "baseContracts": [],
@@ -11,23 +10,22 @@
       "contractKind": "contract",
       "id": 15,
       "name": "c",
+      "nameLocation": "9:1:1",
       "nodeType": "ContractDefinition",
-      "nodes":
-      [
+      "nodes": [
         {
           "constant": false,
           "id": 3,
           "mutability": "mutable",
           "name": "a",
+          "nameLocation": "20:1:1",
           "nodeType": "VariableDeclaration",
           "src": "13:8:1",
           "stateVariable": false,
           "storageLocation": "default",
           "typeDescriptions": {},
-          "typeName":
-          {
-            "baseType":
-            {
+          "typeName": {
+            "baseType": {
               "id": 1,
               "name": "uint",
               "nodeType": "ElementaryTypeName",
@@ -42,34 +40,29 @@
           "visibility": "internal"
         },
         {
-          "body":
-          {
+          "body": {
             "id": 13,
             "nodeType": "Block",
             "src": "43:25:1",
-            "statements":
-            [
+            "statements": [
               {
-                "assignments":
-                [
+                "assignments": [
                   10
                 ],
-                "declarations":
-                [
+                "declarations": [
                   {
                     "constant": false,
                     "id": 10,
                     "mutability": "mutable",
                     "name": "b",
+                    "nameLocation": "60:1:1",
                     "nodeType": "VariableDeclaration",
                     "src": "45:16:1",
                     "stateVariable": false,
                     "storageLocation": "storage",
                     "typeDescriptions": {},
-                    "typeName":
-                    {
-                      "baseType":
-                      {
+                    "typeName": {
+                      "baseType": {
                         "id": 8,
                         "name": "uint",
                         "nodeType": "ElementaryTypeName",
@@ -85,8 +78,7 @@
                   }
                 ],
                 "id": 12,
-                "initialValue":
-                {
+                "initialValue": {
                   "id": 11,
                   "name": "a",
                   "nodeType": "Identifier",
@@ -104,16 +96,15 @@
           "kind": "function",
           "modifiers": [],
           "name": "f",
+          "nameLocation": "32:1:1",
           "nodeType": "FunctionDefinition",
-          "parameters":
-          {
+          "parameters": {
             "id": 4,
             "nodeType": "ParameterList",
             "parameters": [],
             "src": "33:2:1"
           },
-          "returnParameters":
-          {
+          "returnParameters": {
             "id": 5,
             "nodeType": "ParameterList",
             "parameters": [],
@@ -125,7 +116,9 @@
           "visibility": "public"
         }
       ],
-      "src": "0:70:1"
+      "src": "0:70:1",
+      "usedErrors": [],
+      "usedEvents": []
     }
   ],
   "src": "0:71:1"

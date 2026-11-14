@@ -47,7 +47,7 @@ static std::map<std::string, ExperimentalFeature> const ExperimentalFeatureNames
 	{ "ABIEncoderV2", ExperimentalFeature::ABIEncoderV2 },
 	{ "SMTChecker", ExperimentalFeature::SMTChecker },
 	{ "__test", ExperimentalFeature::Test },
-	{ "__testOnlyAnalysis", ExperimentalFeature::TestOnlyAnalysis },
+	{ "__testOnlyAnalysis", ExperimentalFeature::TestOnlyAnalysis }
 };
 
 }

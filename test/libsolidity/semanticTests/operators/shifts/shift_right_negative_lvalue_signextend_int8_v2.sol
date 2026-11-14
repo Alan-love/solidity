@@ -6,9 +6,6 @@ contract C {
         return a >> b;
     }
 }
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // f(int8,uint8): 0x99, 0x00 -> FAILURE
 // f(int8,uint8): 0x99, 0x01 -> FAILURE

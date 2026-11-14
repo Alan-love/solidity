@@ -43,6 +43,7 @@ private:
 	bool visit(VariableDeclaration const& _variable) override;
 	bool visit(ModifierDefinition const& _modifier) override;
 	bool visit(EventDefinition const& _event) override;
+	bool visit(ErrorDefinition const& _error) override;
 
 	CallableDeclaration const* resolveInheritDoc(
 		std::set<CallableDeclaration const*> const& _baseFunctions,
@@ -53,7 +54,8 @@ private:
 	void handleCallable(
 		CallableDeclaration const& _callable,
 		StructurallyDocumented const& _node,
-		StructurallyDocumentedAnnotation& _annotation
+		StructurallyDocumentedAnnotation& _annotation,
+		FunctionType const* _functionType = nullptr
 	);
 
 	langutil::ErrorReporter& m_errorReporter;

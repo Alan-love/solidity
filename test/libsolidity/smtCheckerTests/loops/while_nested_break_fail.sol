@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract C
 {
 	function f(uint x, uint y, bool b, bool c) public pure {
@@ -28,6 +26,10 @@ contract C
 		assert(x >= 20);
 	}
 }
+// ====
+// SMTEngine: all
 // ----
-// Warning 6328: (329-344): CHC: Assertion violation happens here.\nCounterexample:\n\nx = 0\ny = 10\nb = false\nc = true\n\n\nTransaction trace:\nconstructor()\nf(0, 9, false, true)
-// Warning 6328: (380-395): CHC: Assertion violation happens here.\nCounterexample:\n\nx = 15\ny = 20\nb = false\nc = false\n\n\nTransaction trace:\nconstructor()\nf(0, 0, false, false)
+// Warning 6328: (296-311): CHC: Assertion violation happens here.\nCounterexample:\n\nx = 0\ny = 10\nb = false\nc = true\n\nTransaction trace:\nC.constructor()\nC.f(0, 9, false, true)
+// Warning 6328: (347-362): CHC: Assertion violation happens here.\nCounterexample:\n\nx = 15\ny = 20\nb = false\nc = false\n\nTransaction trace:\nC.constructor()\nC.f(0, 0, false, false)
+// Info 1391: CHC: 2 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

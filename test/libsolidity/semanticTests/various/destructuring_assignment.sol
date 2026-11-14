@@ -31,8 +31,9 @@ contract C {
         if (x != 456 || memBytes.length != s.length || y[2] != 789) return 11;
     }
 }
-
-// ====
-// compileViaYul: also
 // ----
 // f(bytes): 0x20, 0x5, "abcde" -> 0
+// gas irOptimized: 242034
+// gas legacy: 246685
+// gas legacyOptimized: 242396
+// gas ssaCFGOptimized: 241881

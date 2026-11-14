@@ -1,4 +1,3 @@
-pragma experimental SMTChecker;
 contract C {
 	function f() public pure returns(int) {
 		int a;
@@ -7,6 +6,10 @@ contract C {
 		assert(a == 3);
 	}
 }
+// ====
+// SMTEngine: all
 // ----
-// Warning 6321: (79-82): Unnamed return variable can remain unassigned. Add an explicit return with value to all non-reverting code paths or name the variable.
-// Warning 6328: (159-173): CHC: Assertion violation happens here.\nCounterexample:\n\n\n = 0\n\nTransaction trace:\nconstructor()\nf()
+// Warning 6321: (47-50): Unnamed return variable can remain unassigned. Add an explicit return with value to all non-reverting code paths or name the variable.
+// Warning 6328: (127-141): CHC: Assertion violation happens here.\nCounterexample:\n\n = 0\na = 2\n\nTransaction trace:\nC.constructor()\nC.f()
+// Info 1391: CHC: 1 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

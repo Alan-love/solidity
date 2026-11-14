@@ -6,8 +6,5 @@ contract A {
         x = A.y;
     }
 }
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // a() -> 2

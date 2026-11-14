@@ -1,0 +1,14 @@
+// populate an empty stack with junk
+initial: []
+targetStackTop: [JUNK, JUNK, JUNK]
+// ----
+//             |      0      1      2
+//             +---------------------
+//    (initial)|
+//    PUSH JUNK|      *
+//    PUSH JUNK|      *      *
+//    PUSH JUNK|      *      *      *
+//             +---------------------
+//     (target)|      *      *      *
+// Plan: gen gen gen
+// Status: Admissible

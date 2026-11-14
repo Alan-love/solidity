@@ -31,9 +31,5 @@ contract test {
         ret_global1 = data1.m_value; // = 3. Changed due to the assignment to x.m_value
     }
 }
-
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // assign() -> 2, 2, 3, 3

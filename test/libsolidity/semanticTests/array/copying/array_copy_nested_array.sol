@@ -10,8 +10,9 @@ contract c {
         return c[1][1] | c[1][2] | c[1][3] | c[1][4];
     }
 }
-
-// ====
-// compileViaYul: also
 // ----
 // test(uint256[2][]): 32, 3, 7, 8, 9, 10, 11, 12 -> 10
+// gas irOptimized: 689536
+// gas legacy: 713478
+// gas legacyOptimized: 690424
+// gas ssaCFGOptimized: 689396

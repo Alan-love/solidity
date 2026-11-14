@@ -1,0 +1,17 @@
+// A spilled value that is not on the stack is demanded twice: one reload and one dup of it.
+initial: [phi0, lit1]
+targetStackTop: [JUNK, v5, v5]
+allowSpilling: true
+initialSpilledSet: {v5}
+// ----
+//             |      0      1      2
+//             +---------------------
+//    (initial)|   phi0   lit1
+//          POP|   phi0
+//      PUSH v5|   phi0     v5
+//         DUP1|   phi0     v5     v5
+//             +---------------------
+//     (target)|      *     v5     v5
+// Plan: 0 gen gen
+// Status: Admissible
+// Spilled: {v5}

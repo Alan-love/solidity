@@ -24,10 +24,15 @@
 
 #pragma once
 
+#include <libsolutil/CommonData.h>
+#include <libsolutil/Numeric.h>
+
+#include <algorithm>
+#include <charconv>
+#include <locale>
+#include <optional>
 #include <string>
 #include <vector>
-
-#include <libsolutil/CommonData.h>
 
 namespace solidity::util
 {
@@ -61,24 +66,24 @@ std::string joinHumanReadable
 {
 	auto const itEnd = end(_list);
 
-	std::string result;
+	std::stringstream result;
 
 	for (auto it = begin(_list); it != itEnd; )
 	{
-		std::string element = *it;
+		auto const& element = *it;
 		bool first = (it == begin(_list));
 		++it;
 		if (!first)
 		{
 			if (it == itEnd && !_lastSeparator.empty())
-				result += _lastSeparator; // last iteration
+				result << _lastSeparator; // last iteration
 			else
-				result += _separator;
+				result << _separator;
 		}
-		result += std::move(element);
+		result << element;
 	}
 
-	return result;
+	return result.str();
 }
 
 /// Joins collection of strings just like joinHumanReadable, but prepends the separator
@@ -101,80 +106,108 @@ std::string joinHumanReadablePrefixed
 /// Returns decimal representation for smaller numbers; hex for large numbers.
 /// "Special" numbers, powers-of-two and powers-of-two minus 1, are returned in
 /// formulaic form like 0x01 * 2**24 - 1.
-/// @a T will typically by unsigned, u160, u256 or bigint.
+/// @a T can be any integer type, will typically be u160, u256 or bigint.
 /// @param _value to be formatted
 /// @param _useTruncation if true, internal truncation is also applied,
 /// like  0x5555...{+56 more}...5555
-/// @example formatNumber((u256)0x7ffffff)
-template <class T>
-inline std::string formatNumberReadable(
-	T const& _value,
-	bool _useTruncation = false
-)
+/// @example formatNumberReadable((u256)0x7ffffff) = "2**27 - 1"
+/// @example formatNumberReadable(-57896044618658097711785492504343953926634992332820282019728792003956564819968) = -2**255
+std::string formatNumberReadable(bigint const& _value, bool _useTruncation = false);
+
+/// Parses an arithmetic value from a `string_view` without allocating and/or throwing.
+/// The whole string has to be consumed, i.e., a number followed by trailing characters is rejected.
+/// Returns `std::nullopt` on error.
+template<concepts::arithmetic T>
+std::optional<T> parseArithmetic(std::string_view const _value)
 {
-	static_assert(
-		std::is_same<bigint, T>::value || !std::numeric_limits<T>::is_signed,
-		"only unsigned types or bigint supported"
-	); //bigint does not carry sign bit on shift
+	T result;
+	auto const [end, errorCondition] = std::from_chars(_value.data(), _value.data() + _value.size(), result);
+	if (errorCondition == std::errc() && end == _value.data() + _value.size())
+		return result;
+	return std::nullopt;
+}
 
-	// smaller numbers return as decimal
-	if (_value <= 0x1000000)
-		return _value.str();
+/// Safely converts an unsigned integer as string into an unsigned int type.
+///
+/// @return the converted number or nullopt in case of an failure (including if it would not fit).
+inline std::optional<unsigned> toUnsignedInt(std::string const& _value)
+{
+	return parseArithmetic<unsigned>(_value);
+}
 
-	HexCase hexcase = HexCase::Mixed;
-	HexPrefix prefix = HexPrefix::Add;
+/// Converts parameter _c to its lowercase equivalent if c is an uppercase letter and has a lowercase equivalent. It uses the classic "C" locale semantics.
+/// @param _c value to be converted
+/// @return the converted value
+inline char toLower(char _c)
+{
+	return tolower(_c, std::locale::classic());
+}
 
-	// when multiple trailing zero bytes, format as N * 2**x
-	int i = 0;
-	T v = _value;
-	for (; (v & 0xff) == 0; v >>= 8)
-		++i;
-	if (i > 2)
-	{
-		// 0x100 yields 2**8 (N is 1 and redundant)
-		if (v == 1)
-			return "2**" + std::to_string(i * 8);
-		return toHex(toCompactBigEndian(v), prefix, hexcase) +
-			" * 2**" +
-			std::to_string(i * 8);
-	}
+/// Converts parameter _c to its uppercase equivalent if c is an lowercase letter and has a uppercase equivalent. It uses the classic "C" locale semantics.
+/// @param _c value to be converted
+/// @return the converted value
+inline char toUpper(char _c)
+{
+	return toupper(_c, std::locale::classic());
+}
 
-	// when multiple trailing FF bytes, format as N * 2**x - 1
-	i = 0;
-	for (v = _value; (v & 0xff) == 0xff; v >>= 8)
-		++i;
-	if (i > 2)
-	{
-		// 0xFF yields 2**8 - 1 (v is 0 in that case)
-		if (v == 0)
-			return "2**" + std::to_string(i * 8) + " - 1";
-		return toHex(toCompactBigEndian(T(v + 1)), prefix, hexcase) +
-			" * 2**" + std::to_string(i * 8) +
-			" - 1";
-	}
+/// Converts parameter _s to its lowercase equivalent. It uses the classic "C" locale semantics.
+/// @param _s value to be converted
+/// @return the converted value
+inline std::string toLower(std::string _s)
+{
+	std::transform(_s.begin(), _s.end(), _s.begin(), [](char _c) {
+		return toLower(_c);
+	});
+	return _s;
+}
 
-	std::string str = toHex(toCompactBigEndian(_value), prefix, hexcase);
-	if (_useTruncation)
-	{
-		// return as interior-truncated hex.
-		size_t len = str.size();
+/// Checks whether _c is a decimal digit character. It uses the classic "C" locale semantics.
+/// @param _c character to be checked
+/// @return true if _c is a decimal digit character, false otherwise
+inline bool isDigit(char _c)
+{
+	return isdigit(_c, std::locale::classic());
+}
 
-		if (len < 24)
-			return str;
+/// Checks if character is printable using classic "C" locale
+/// @param _c character to be checked
+/// @return true if _c is a printable character, false otherwise.
+inline bool isPrint(char _c)
+{
+	return isprint(_c, std::locale::classic());
+}
 
-		size_t const initialChars = (prefix == HexPrefix::Add) ? 6 : 4;
-		size_t const finalChars = 4;
-		size_t numSkipped = len - initialChars - finalChars;
+/// Adds a prefix to every line in the input.
+/// @see printPrefixed()
+std::string prefixLines(
+	std::string const& _input,
+	std::string const& _prefix,
+	bool _trimPrefix = true
+);
 
-		return str.substr(0, initialChars) +
-			"...{+" +
-			std::to_string(numSkipped) +
-			" more}..." +
-			str.substr(len-finalChars, len);
-	}
+/// Prints to a stream, adding a prefix to every line in the input.
+/// Assumes \n as the line separator.
+/// @param _trimPrefix If true, the function avoids introducing trailing whitespace on empty lines.
+///     This is achieved by removing trailing spaces from the prefix on such lines.
+///     Note that tabs and newlines are not removed, only spaces are.
+/// @param _ensureFinalNewline If true, an extra \n will be printed at the end of @a _input if it does
+///     not already end with one.
+void printPrefixed(
+	std::ostream& _output,
+	std::string const& _input,
+	std::string const& _prefix,
+	bool _trimPrefix = true,
+	bool _ensureFinalNewline = true
+);
 
-	// otherwise, show whole value.
-	return str;
+/// Adds a standard indent of 4 spaces to every line in the input.
+/// Assumes \n as the line separator.
+/// @param _indentEmptyLines If true, the indent will be applied to empty lines as well, resulting
+///     such lines containing trailing whitespace.
+inline std::string indent(std::string const& _input, bool _indentEmptyLines = false)
+{
+	return prefixLines(_input, "    ", !_indentEmptyLines);
 }
 
 }

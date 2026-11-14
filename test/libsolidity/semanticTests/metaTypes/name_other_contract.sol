@@ -11,7 +11,7 @@ contract C {
     }
 }
 
-contract Test {
+contract Test is C {
     function c() public pure returns (string memory) {
         return type(C).name;
     }
@@ -22,7 +22,6 @@ contract Test {
         return type(I).name;
     }
 }
-
 // ----
 // c() -> 0x20, 1, "C"
 // a() -> 0x20, 1, "A"

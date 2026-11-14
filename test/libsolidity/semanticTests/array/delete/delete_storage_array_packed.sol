@@ -12,7 +12,8 @@ contract C {
         return (data[0], data[1], data[2]);
     }
 }
-// ====
-// compileViaYul: also
 // ----
 // f() -> 0, 0, 0
+// gas irOptimized: 88025
+// gas legacy: 88796
+// gas legacyOptimized: 87704

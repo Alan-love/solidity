@@ -2,8 +2,7 @@
   "absolutePath": "a",
   "id": 40,
   "nodeType": "SourceUnit",
-  "nodes":
-  [
+  "nodes": [
     {
       "abstract": false,
       "baseContracts": [],
@@ -11,24 +10,25 @@
       "contractKind": "contract",
       "id": 39,
       "name": "C",
+      "nameLocation": "9:1:1",
       "nodeType": "ContractDefinition",
-      "nodes":
-      [
+      "nodes": [
         {
           "constant": false,
           "id": 4,
           "mutability": "mutable",
           "name": "m",
+          "nameLocation": "60:1:1",
           "nodeType": "VariableDeclaration",
           "src": "17:44:1",
           "stateVariable": false,
           "storageLocation": "default",
           "typeDescriptions": {},
-          "typeName":
-          {
+          "typeName": {
             "id": 3,
-            "keyType":
-            {
+            "keyName": "",
+            "keyNameLocation": "-1:-1:-1",
+            "keyType": {
               "id": 1,
               "name": "address",
               "nodeType": "ElementaryTypeName",
@@ -38,8 +38,9 @@
             "nodeType": "Mapping",
             "src": "17:35:1",
             "typeDescriptions": {},
-            "valueType":
-            {
+            "valueName": "",
+            "valueNameLocation": "-1:-1:-1",
+            "valueType": {
               "id": 2,
               "name": "address",
               "nodeType": "ElementaryTypeName",
@@ -51,32 +52,28 @@
           "visibility": "public"
         },
         {
-          "body":
-          {
+          "body": {
             "id": 37,
             "nodeType": "Block",
             "src": "134:122:1",
-            "statements":
-            [
+            "statements": [
               {
-                "assignments":
-                [
+                "assignments": [
                   12
                 ],
-                "declarations":
-                [
+                "declarations": [
                   {
                     "constant": false,
                     "id": 12,
                     "mutability": "mutable",
                     "name": "a",
+                    "nameLocation": "160:1:1",
                     "nodeType": "VariableDeclaration",
                     "src": "144:17:1",
                     "stateVariable": false,
                     "storageLocation": "default",
                     "typeDescriptions": {},
-                    "typeName":
-                    {
+                    "typeName": {
                       "id": 11,
                       "name": "address",
                       "nodeType": "ElementaryTypeName",
@@ -88,10 +85,8 @@
                   }
                 ],
                 "id": 16,
-                "initialValue":
-                {
-                  "baseExpression":
-                  {
+                "initialValue": {
+                  "baseExpression": {
                     "id": 13,
                     "name": "m",
                     "nodeType": "Identifier",
@@ -100,8 +95,7 @@
                     "typeDescriptions": {}
                   },
                   "id": 15,
-                  "indexExpression":
-                  {
+                  "indexExpression": {
                     "id": 14,
                     "name": "arg",
                     "nodeType": "Identifier",
@@ -117,11 +111,9 @@
                 "src": "144:26:1"
               },
               {
-                "expression":
-                {
+                "expression": {
                   "id": 19,
-                  "leftHandSide":
-                  {
+                  "leftHandSide": {
                     "id": 17,
                     "name": "r",
                     "nodeType": "Identifier",
@@ -131,8 +123,7 @@
                   },
                   "nodeType": "Assignment",
                   "operator": "=",
-                  "rightHandSide":
-                  {
+                  "rightHandSide": {
                     "id": 18,
                     "name": "arg",
                     "nodeType": "Identifier",
@@ -148,24 +139,22 @@
                 "src": "180:7:1"
               },
               {
-                "assignments":
-                [
+                "assignments": [
                   22
                 ],
-                "declarations":
-                [
+                "declarations": [
                   {
                     "constant": false,
                     "id": 22,
                     "mutability": "mutable",
                     "name": "c",
+                    "nameLocation": "205:1:1",
                     "nodeType": "VariableDeclaration",
                     "src": "197:9:1",
                     "stateVariable": false,
                     "storageLocation": "default",
                     "typeDescriptions": {},
-                    "typeName":
-                    {
+                    "typeName": {
                       "id": 21,
                       "name": "address",
                       "nodeType": "ElementaryTypeName",
@@ -177,10 +166,8 @@
                   }
                 ],
                 "id": 27,
-                "initialValue":
-                {
-                  "arguments":
-                  [
+                "initialValue": {
+                  "arguments": [
                     {
                       "id": 25,
                       "name": "this",
@@ -190,14 +177,12 @@
                       "typeDescriptions": {}
                     }
                   ],
-                  "expression":
-                  {
+                  "expression": {
                     "id": 24,
                     "nodeType": "ElementaryTypeNameExpression",
                     "src": "209:7:1",
                     "typeDescriptions": {},
-                    "typeName":
-                    {
+                    "typeName": {
                       "id": 23,
                       "name": "address",
                       "nodeType": "ElementaryTypeName",
@@ -206,6 +191,7 @@
                     }
                   },
                   "id": 26,
+                  "nameLocations": [],
                   "names": [],
                   "nodeType": "FunctionCall",
                   "src": "209:13:1",
@@ -216,13 +202,10 @@
                 "src": "197:25:1"
               },
               {
-                "expression":
-                {
+                "expression": {
                   "id": 35,
-                  "leftHandSide":
-                  {
-                    "baseExpression":
-                    {
+                  "leftHandSide": {
+                    "baseExpression": {
                       "id": 28,
                       "name": "m",
                       "nodeType": "Identifier",
@@ -231,8 +214,7 @@
                       "typeDescriptions": {}
                     },
                     "id": 30,
-                    "indexExpression":
-                    {
+                    "indexExpression": {
                       "id": 29,
                       "name": "c",
                       "nodeType": "Identifier",
@@ -246,10 +228,8 @@
                   },
                   "nodeType": "Assignment",
                   "operator": "=",
-                  "rightHandSide":
-                  {
-                    "arguments":
-                    [
+                  "rightHandSide": {
+                    "arguments": [
                       {
                         "hexValue": "30",
                         "id": 33,
@@ -260,22 +240,22 @@
                         "value": "0"
                       }
                     ],
-                    "expression":
-                    {
+                    "expression": {
                       "id": 32,
                       "nodeType": "ElementaryTypeNameExpression",
-                      "src": "239:7:1",
+                      "src": "239:8:1",
                       "typeDescriptions": {},
-                      "typeName":
-                      {
+                      "typeName": {
                         "id": 31,
                         "name": "address",
                         "nodeType": "ElementaryTypeName",
-                        "src": "239:7:1",
+                        "src": "239:8:1",
+                        "stateMutability": "payable",
                         "typeDescriptions": {}
                       }
                     },
                     "id": 34,
+                    "nameLocations": [],
                     "names": [],
                     "nodeType": "FunctionCall",
                     "src": "239:10:1",
@@ -296,25 +276,24 @@
           "kind": "function",
           "modifiers": [],
           "name": "f",
+          "nameLocation": "76:1:1",
           "nodeType": "FunctionDefinition",
-          "parameters":
-          {
+          "parameters": {
             "id": 7,
             "nodeType": "ParameterList",
-            "parameters":
-            [
+            "parameters": [
               {
                 "constant": false,
                 "id": 6,
                 "mutability": "mutable",
                 "name": "arg",
+                "nameLocation": "94:3:1",
                 "nodeType": "VariableDeclaration",
                 "src": "78:19:1",
                 "stateVariable": false,
                 "storageLocation": "default",
                 "typeDescriptions": {},
-                "typeName":
-                {
+                "typeName": {
                   "id": 5,
                   "name": "address",
                   "nodeType": "ElementaryTypeName",
@@ -327,24 +306,22 @@
             ],
             "src": "77:21:1"
           },
-          "returnParameters":
-          {
+          "returnParameters": {
             "id": 10,
             "nodeType": "ParameterList",
-            "parameters":
-            [
+            "parameters": [
               {
                 "constant": false,
                 "id": 9,
                 "mutability": "mutable",
                 "name": "r",
+                "nameLocation": "131:1:1",
                 "nodeType": "VariableDeclaration",
                 "src": "115:17:1",
                 "stateVariable": false,
                 "storageLocation": "default",
                 "typeDescriptions": {},
-                "typeName":
-                {
+                "typeName": {
                   "id": 8,
                   "name": "address",
                   "nodeType": "ElementaryTypeName",
@@ -363,7 +340,9 @@
           "visibility": "public"
         }
       ],
-      "src": "0:258:1"
+      "src": "0:258:1",
+      "usedErrors": [],
+      "usedEvents": []
     }
   ],
   "src": "0:259:1"

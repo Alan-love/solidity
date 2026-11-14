@@ -29,8 +29,6 @@
 
 #include <libsolutil/CommonData.h>
 
-#include <boost/noncopyable.hpp>
-
 #include <functional>
 #include <vector>
 
@@ -47,10 +45,12 @@ class Pattern;
 /**
  * Container for all simplification rules.
  */
-class Rules: public boost::noncopyable
+class Rules
 {
 public:
-	using Expression = ExpressionClasses::Expression;
+	/// Noncopyable.
+	Rules(Rules const&) = delete;
+	Rules& operator=(Rules const&) = delete;
 
 	Rules();
 
@@ -85,7 +85,6 @@ private:
 class Pattern
 {
 public:
-	using Expression = ExpressionClasses::Expression;
 	using Id = ExpressionClasses::Id;
 
 	using Builtins = evmasm::EVMBuiltins<Pattern>;
@@ -109,7 +108,7 @@ public:
 	unsigned matchGroup() const { return m_matchGroup; }
 	bool matches(Expression const& _expr, ExpressionClasses const& _classes) const;
 
-	AssemblyItem toAssemblyItem(langutil::SourceLocation const& _location) const;
+	AssemblyItem toAssemblyItem(langutil::DebugData::ConstPtr _debugData) const;
 	std::vector<Pattern> arguments() const { return m_arguments; }
 
 	/// @returns the id of the matched expression if this pattern is part of a match group.
@@ -145,9 +144,8 @@ private:
  */
 struct ExpressionTemplate
 {
-	using Expression = ExpressionClasses::Expression;
 	using Id = ExpressionClasses::Id;
-	explicit ExpressionTemplate(Pattern const& _pattern, langutil::SourceLocation const& _location);
+	explicit ExpressionTemplate(Pattern const& _pattern, langutil::DebugData::ConstPtr const& _debugData);
 	std::string toString() const;
 	bool hasId = false;
 	/// Id of the matched expression, if available.

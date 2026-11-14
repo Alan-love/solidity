@@ -19,6 +19,7 @@
 #pragma once
 
 #include <libsolutil/AnsiColorized.h>
+#include <libsolidity/interface/CompilerStack.h>
 #include <test/TestCase.h>
 
 #include <iosfwd>
@@ -34,11 +35,39 @@ class CompilerStack;
 namespace solidity::frontend::test
 {
 
-class ASTJSONTest: public TestCase
+class ASTJSONTest: public EVMVersionRestrictedTestCase
 {
 public:
+	struct TestVariant
+	{
+		TestVariant(std::string_view _baseName, CompilerStack::State _stopAfter):
+			baseName(_baseName),
+			stopAfter(_stopAfter)
+		{}
+
+		std::string name() const
+		{
+			return stopAfter == CompilerStack::State::Parsed ? "parseOnly" : "";
+		}
+
+		std::string astFilename() const
+		{
+			return std::string(baseName) +
+				(name().empty() ? "" : "_") +
+				name() +
+				".json";
+		}
+
+		std::string baseName;
+		CompilerStack::State stopAfter;
+		std::string result;
+		std::string expectation;
+	};
+
 	static std::unique_ptr<TestCase> create(Config const& _config)
-	{ return std::make_unique<ASTJSONTest>(_config.filename); }
+	{
+		return std::make_unique<ASTJSONTest>(_config.filename);
+	}
 	ASTJSONTest(std::string const& _filename);
 
 	TestResult run(std::ostream& _stream, std::string const& _linePrefix = "", bool const _formatted = false) override;
@@ -47,12 +76,9 @@ public:
 	void printUpdatedExpectations(std::ostream& _stream, std::string const& _linePrefix) const override;
 private:
 	bool runTest(
-		std::string& _expectation,
-		std::string& _result,
+		TestVariant& _testVariant,
 		std::map<std::string, unsigned> const& _sourceIndices,
 		CompilerStack& _compiler,
-		bool _parseOnly,
-		std::string const& _variation,
 		std::ostream& _stream,
 		std::string const& _linePrefix = "",
 		bool const _formatted = false
@@ -60,18 +86,17 @@ private:
 	void updateExpectation(
 		std::string const& _filename,
 		std::string const& _expectation,
-		std::string const& _variation
+		std::string const& _variant
 	) const;
 
+	void generateTestVariants(std::string const& _filename);
+	void fillSources(std::string const& _filename);
+	void validateTestConfiguration() const;
+
+	std::vector<TestVariant> m_variants;
+	std::optional<CompilerStack::State> m_expectedFailAfter;
+
 	std::vector<std::pair<std::string, std::string>> m_sources;
-	std::string m_expectationLegacy;
-	std::string m_expectationParseOnly;
-	std::string m_astFilename;
-	std::string m_astParseOnlyFilename;
-	std::string m_legacyAstFilename;
-	std::string m_result;
-	std::string m_resultLegacy;
-	std::string m_resultParseOnly;
 };
 
 }

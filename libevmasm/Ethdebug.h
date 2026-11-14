@@ -1,0 +1,57 @@
+/*
+	This file is part of solidity.
+
+	solidity is free software: you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation, either version 3 of the License, or
+	(at your option) any later version.
+
+	solidity is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+	GNU General Public License for more details.
+
+	You should have received a copy of the GNU General Public License
+	along with solidity.  If not, see <http://www.gnu.org/licenses/>.
+*/
+// SPDX-License-Identifier: GPL-3.0
+
+#pragma once
+
+#include <libevmasm/Assembly.h>
+#include <libevmasm/LinkerObject.h>
+
+#include <liblangutil/EthdebugSchema.h>
+
+#include <libsolutil/JSON.h>
+
+#include <map>
+
+namespace solidity::evmasm::ethdebug
+{
+
+struct Source
+{
+	unsigned id{};
+	std::string path;
+	std::string contents;
+	std::string language;
+};
+
+/// The version of the ethdebug/format specification the outputs follow, which
+/// the stamps of the programs and of the resources name.
+constexpr std::string_view SpecificationVersion = "0.1.0-draft.2";
+
+// returns ethdebug/format/program, stamped with its schema and the specification version.
+Json program(std::string_view _name, unsigned _sourceID, Assembly const& _assembly, LinkerObject const& _linkerObject);
+
+// returns ethdebug/format/info/resources, stamped with its schema and the specification version.
+Json resources(
+	std::map<std::string, langutil::ethdebug::schema::Type> _types = {},
+	std::map<std::string, langutil::ethdebug::schema::Pointer::Template> _pointers = {}
+);
+
+// returns ethdebug/format/materials/compilation
+Json compilation(std::vector<Source> const& _sources, std::string_view _compilerVersion);
+
+} // namespace solidity::evmasm::ethdebug

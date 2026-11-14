@@ -11,4 +11,5 @@ contract C {
 		this.f{gas: 42};
 	}
 }
+// ====
 // ----

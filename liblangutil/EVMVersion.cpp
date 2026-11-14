@@ -20,6 +20,7 @@
  */
 
 #include <liblangutil/EVMVersion.h>
+#include <libevmasm/Instruction.h>
 
 using namespace solidity;
 using namespace solidity::evmasm;
@@ -38,6 +39,8 @@ bool EVMVersion::hasOpcode(Instruction _opcode) const
 	case Instruction::SHR:
 	case Instruction::SAR:
 		return hasBitwiseShifting();
+	case Instruction::CLZ:
+		return hasCLZ();
 	case Instruction::CREATE2:
 		return hasCreate2();
 	case Instruction::EXTCODEHASH:
@@ -46,8 +49,20 @@ bool EVMVersion::hasOpcode(Instruction _opcode) const
 		return hasChainID();
 	case Instruction::SELFBALANCE:
 		return hasSelfBalance();
+	case Instruction::BASEFEE:
+		return hasBaseFee();
+	case Instruction::BLOBHASH:
+		return hasBlobHash();
+	case Instruction::BLOBBASEFEE:
+		return hasBlobBaseFee();
+	case Instruction::SLOTNUM:
+		return hasSlotNum();
+	case Instruction::MCOPY:
+		return hasMcopy();
+	case Instruction::TSTORE:
+	case Instruction::TLOAD:
+		return supportsTransientStorage();
 	default:
 		return true;
 	}
 }
-

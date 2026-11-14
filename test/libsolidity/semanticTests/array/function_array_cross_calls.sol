@@ -40,8 +40,13 @@ contract C {
         return this.e;
     }
 }
-
-// ====
-// compileViaYul: also
 // ----
 // test() -> 5, 6, 7
+// gas irOptimized: 86460
+// gas irOptimized code: 161000
+// gas legacy: 97551
+// gas legacy code: 342800
+// gas legacyOptimized: 87808
+// gas legacyOptimized code: 193000
+// gas ssaCFGOptimized: 86221
+// gas ssaCFGOptimized code: 161600

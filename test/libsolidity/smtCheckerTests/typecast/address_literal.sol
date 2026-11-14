@@ -1,5 +1,3 @@
-pragma experimental SMTChecker;
-
 contract C {
   address x; // We know that this is "zero initialised".
   function f() public view {
@@ -21,5 +19,9 @@ contract C {
     assert(a == b);
   }
 }
+// ====
+// SMTEngine: all
 // ----
-// Warning 6328: (487-501): CHC: Assertion violation happens here.\nCounterexample:\nx = 0\n\n\n\nTransaction trace:\nconstructor()\nState: x = 0\ng()
+// Warning 6328: (454-468): CHC: Assertion violation happens here.\nCounterexample:\nx = 0x0\na = 0x0\nb = 0x01\nc = 0x0\nd = 0x0\ne = 0x12345678\n\nTransaction trace:\nC.constructor()\nState: x = 0x0\nC.g()
+// Info 1391: CHC: 5 verification condition(s) proved safe! Enable the model checker option "show proved safe" to see all of them.
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

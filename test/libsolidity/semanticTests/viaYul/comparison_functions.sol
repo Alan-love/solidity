@@ -24,9 +24,6 @@ contract C {
 		inv  = internal1 != invalid;
 	}
 }
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // equal() -> true, false, false
 // unequal() -> false, true, true

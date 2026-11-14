@@ -1,0 +1,31 @@
+contract C {
+    uint public x;
+    function set(uint _x) public {
+        x = _x;
+    }
+    function get() public view returns (uint) {
+        return x;
+    }
+}
+// ----
+// .compilation.compiler.name: solc
+// .compilation.id: <IGNORE>
+// .compilation.sources | length: 1
+// .compilation.sources[0].id: 0
+// .compilation.sources[0].path: <IGNORE>
+// .compilation.sources[0].contents: <IGNORE>
+// .compilation.sources[0].language: Solidity
+// .resources.ethdebug: {"schema":"ethdebug/format/info/resources","version":"0.1.0-draft.2"}
+// .resources.types.t_uint256.kind: uint
+// .resources.types.t_uint256.bits: 256
+// .resources.pointers | keys: ["storage-t_uint256"]
+// C.contract.name: C
+// C.creation.ethdebug: {"schema":"ethdebug/format/program","version":"0.1.0-draft.2"}
+// C.creation.environment: create
+// C.contract.definition.source.id: 0
+// C.creation.instructions[0].offset: 0
+// C.creation.instructions[0].operation.mnemonic: PUSH1
+// C.creation.instructions[0].operation.arguments[0]: 0x80
+// C.creation.instructions[2].operation.mnemonic: MSTORE
+// C.runtime.contract.name: C
+// C.runtime.environment: call

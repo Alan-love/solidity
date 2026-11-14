@@ -1,8 +1,10 @@
-pragma experimental SMTChecker;
 contract C {
     function f(function(uint) external returns (uint) g, function(uint) external returns (uint) h) public {
 		assert(g(2) == h(2));
     }
 }
+// ====
+// SMTEngine: all
 // ----
-// Warning 6328: (155-175): CHC: Assertion violation happens here.\nCounterexample:\n\ng = 0\nh = 0\n\n\nTransaction trace:\nconstructor()\nf(0, 0)
+// Warning 6328: (123-143): CHC: Assertion violation happens here.\nCounterexample:\n\ng = 0\nh = 0\n\nTransaction trace:\nC.constructor()\nC.f(0, 0)\n    g(2) -- untrusted external call\n    h(2) -- untrusted external call
+// Warning 3993: The BMC engine of the SMTChecker is deprecated and will be removed in a future release. Please use the CHC engine instead.

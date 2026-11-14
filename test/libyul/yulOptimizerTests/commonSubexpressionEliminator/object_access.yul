@@ -14,6 +14,7 @@ object "main" {
     }
     data "abc" "Hello, World!"
 }
+// ====
 // ----
 // step: commonSubexpressionEliminator
 //

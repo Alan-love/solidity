@@ -24,11 +24,15 @@
 
 #include <libyul/optimiser/DataFlowAnalyzer.h>
 #include <libyul/optimiser/OptimiserStep.h>
+#include <libyul/optimiser/SyntacticalEquality.h>
+#include <libyul/optimiser/BlockHasher.h>
+
+#include <set>
 
 namespace solidity::yul
 {
 
-struct Dialect;
+class Dialect;
 struct SideEffects;
 
 /**
@@ -43,15 +47,29 @@ public:
 	static constexpr char const* name{"CommonSubexpressionEliminator"};
 	static void run(OptimiserStepContext&, Block& _ast);
 
+	using DataFlowAnalyzer::operator();
+	void operator()(FunctionDefinition&) override;
+
 private:
 	CommonSubexpressionEliminator(
 		Dialect const& _dialect,
-		std::map<YulString, SideEffects> _functionSideEffects
+		std::map<FunctionHandle, SideEffects> _functionSideEffects
 	);
 
 protected:
 	using ASTModifier::visit;
 	void visit(Expression& _e) override;
+
+	void assignValue(YulName _variable, Expression const* _value) override;
+private:
+	std::set<YulName> m_returnVariables;
+	util::unordered_flat_map<
+		std::reference_wrapper<Expression const>,
+		std::set<YulName>,
+		ExpressionHash,
+		SyntacticallyEqualExpression
+	> m_replacementCandidates;
 };
+
 
 }

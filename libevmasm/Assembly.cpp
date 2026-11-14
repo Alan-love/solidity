@@ -25,34 +25,97 @@
 #include <libevmasm/CommonSubexpressionEliminator.h>
 #include <libevmasm/ControlFlowGraph.h>
 #include <libevmasm/PeepholeOptimiser.h>
+#include <libevmasm/Inliner.h>
 #include <libevmasm/JumpdestRemover.h>
 #include <libevmasm/BlockDeduplicator.h>
 #include <libevmasm/ConstantOptimiser.h>
-#include <libevmasm/GasMeter.h>
 
+#include <liblangutil/CharStream.h>
 #include <liblangutil/Exceptions.h>
 
-#include <fstream>
-#include <json/json.h>
+#include <libsolutil/JSON.h>
+#include <libsolutil/StringUtils.h>
 
-using namespace std;
+#include <fmt/format.h>
+
+#include <range/v3/algorithm/any_of.hpp>
+#include <range/v3/algorithm/find_if.hpp>
+#include <range/v3/view/drop_exactly.hpp>
+#include <range/v3/view/enumerate.hpp>
+#include <range/v3/view/map.hpp>
+
+#include <fstream>
+#include <limits>
+#include <iterator>
+#include <stack>
+
 using namespace solidity;
 using namespace solidity::evmasm;
 using namespace solidity::langutil;
 using namespace solidity::util;
 
-AssemblyItem const& Assembly::append(AssemblyItem const& _i)
+namespace
+{
+
+/// Produces instruction location info in RAII style. When an assembly instruction is added to the bytecode,
+/// this class can be instantiated in that scope. It will record the current bytecode size (before addition)
+/// and, at destruction time, record the new bytecode size. This information is then added to an external
+/// instruction locations vector.
+/// If the instruction decomposes into multiple individual evm instructions, `emit` can be
+/// called for all but the last one (which will be emitted by the destructor).
+class InstructionLocationEmitter
+{
+public:
+	InstructionLocationEmitter(
+		std::vector<LinkerObject::InstructionLocation>& _instructionLocations,
+		bytes const& _bytecode,
+		size_t const _assemblyItemIndex
+	):
+		m_instructionLocations(_instructionLocations),
+		m_bytecode(_bytecode),
+		m_assemblyItemIndex(_assemblyItemIndex),
+		m_instructionLocationStart(_bytecode.size())
+	{}
+
+	~InstructionLocationEmitter()
+	{
+		emit();
+	}
+
+	void emit()
+	{
+		auto const end = m_bytecode.size();
+		m_instructionLocations.push_back(LinkerObject::InstructionLocation{
+			.start = m_instructionLocationStart,
+			.end = end,
+			.assemblyItemIndex = m_assemblyItemIndex
+		});
+		m_instructionLocationStart = end;
+	}
+
+private:
+	std::vector<LinkerObject::InstructionLocation>& m_instructionLocations;
+	bytes const& m_bytecode;
+	size_t const m_assemblyItemIndex{};
+	size_t m_instructionLocationStart{};
+};
+
+}
+
+std::map<std::string, std::shared_ptr<std::string const>> Assembly::s_sharedSourceNames;
+
+AssemblyItem const& Assembly::append(AssemblyItem _i)
 {
 	assertThrow(m_deposit >= 0, AssemblyException, "Stack underflow.");
 	m_deposit += static_cast<int>(_i.deposit());
-	m_items.emplace_back(_i);
+	m_items.emplace_back(std::move(_i));
 	if (!m_items.back().location().isValid() && m_currentSourceLocation.isValid())
 		m_items.back().setLocation(m_currentSourceLocation);
 	m_items.back().m_modifierDepth = m_currentModifierDepth;
 	return m_items.back();
 }
 
-unsigned Assembly::bytesRequired(unsigned subTagSize) const
+unsigned Assembly::codeSize(unsigned subTagSize) const
 {
 	for (unsigned tagSize = subTagSize; true; ++tagSize)
 	{
@@ -61,53 +124,259 @@ unsigned Assembly::bytesRequired(unsigned subTagSize) const
 			ret += i.second.size();
 
 		for (AssemblyItem const& i: m_items)
-			ret += i.bytesRequired(tagSize);
-		if (util::bytesRequired(ret) <= tagSize)
+			ret += i.bytesRequired(tagSize, m_evmVersion, Precision::Precise);
+		if (numberEncodingSize(ret) <= tagSize)
 			return static_cast<unsigned>(ret);
 	}
+}
+
+void Assembly::importAssemblyItemsFromJSON(Json const& _code, std::vector<std::string> const& _sourceList)
+{
+	solAssert(m_items.empty());
+	solRequire(_code.is_array(), AssemblyImportException, "Supplied JSON is not an array.");
+	for (auto jsonItemIter = std::begin(_code); jsonItemIter != std::end(_code); ++jsonItemIter)
+	{
+		AssemblyItem const& newItem = m_items.emplace_back(createAssemblyItemFromJSON(*jsonItemIter, _sourceList));
+		if (newItem == Instruction::JUMPDEST)
+			solThrow(AssemblyImportException, "JUMPDEST instruction without a tag");
+		else if (newItem.type() == AssemblyItemType::Tag)
+		{
+			++jsonItemIter;
+			if (jsonItemIter != std::end(_code) && createAssemblyItemFromJSON(*jsonItemIter, _sourceList) != Instruction::JUMPDEST)
+				solThrow(AssemblyImportException, "JUMPDEST expected after tag.");
+		}
+	}
+}
+
+AssemblyItem Assembly::createAssemblyItemFromJSON(Json const& _json, std::vector<std::string> const& _sourceList)
+{
+	solRequire(_json.is_object(), AssemblyImportException, "Supplied JSON is not an object.");
+	static std::set<std::string> const validMembers{"name", "begin", "end", "source", "value", "modifierDepth", "jumpType"};
+	for (auto const& [member, _]: _json.items())
+		solRequire(
+			validMembers.count(member),
+			AssemblyImportException,
+			fmt::format(
+				"Unknown member '{}'. Valid members are: {}.",
+				member,
+				solidity::util::joinHumanReadable(validMembers, ", ")
+			)
+		);
+	solRequire(isOfType<std::string>(_json["name"]), AssemblyImportException, "Member 'name' missing or not of type string.");
+	solRequire(isOfTypeIfExists<int>(_json, "begin"), AssemblyImportException, "Optional member 'begin' not of type int.");
+	solRequire(isOfTypeIfExists<int>(_json, "end"), AssemblyImportException, "Optional member 'end' not of type int.");
+	solRequire(isOfTypeIfExists<int>(_json, "source"), AssemblyImportException, "Optional member 'source' not of type int.");
+	solRequire(isOfTypeIfExists<std::string>(_json, "value"), AssemblyImportException, "Optional member 'value' not of type string.");
+	solRequire(isOfTypeIfExists<int>(_json, "modifierDepth"), AssemblyImportException, "Optional member 'modifierDepth' not of type int.");
+	solRequire(isOfTypeIfExists<std::string>(_json, "jumpType"), AssemblyImportException, "Optional member 'jumpType' not of type string.");
+
+	std::string name = get<std::string>(_json["name"]);
+	solRequire(!name.empty(), AssemblyImportException, "Member 'name' is empty.");
+
+	SourceLocation location;
+	if (_json.contains("begin"))
+		location.start = get<int>(_json["begin"]);
+	if (_json.contains("end"))
+		location.end = get<int>(_json["end"]);
+	int srcIndex = getOrDefault<int>(_json, "source", -1);
+	size_t modifierDepth = static_cast<size_t>(getOrDefault<int>(_json, "modifierDepth", 0));
+	std::string value = getOrDefault<std::string>(_json, "value", "");
+	std::string jumpType = getOrDefault<std::string>(_json, "jumpType", "");
+
+	auto updateUsedTags = [&](u256 const& data)
+	{
+		m_usedTags = std::max(m_usedTags, static_cast<unsigned>(data) + 1);
+		return data;
+	};
+
+	// m_tagPositionsInBytecode is sized from m_usedTags, so an imported tag ID has to stay within the
+	// same range that newTag() enforces on the ones we hand out ourselves.
+	auto requireTagIDInRange = [&](u256 const& _tagID)
+	{
+		solRequire(
+			_tagID < 0xffffffff,
+			AssemblyImportException,
+			"The 'value' of a tag or tag reference is out of the supported range."
+		);
+		return _tagID;
+	};
+
+	auto storeImmutableHash = [&](std::string const& _immutableName) -> h256
+	{
+		h256 hash(util::keccak256(_immutableName));
+		solAssert(m_immutables.count(hash) == 0 || m_immutables[hash] == _immutableName);
+		m_immutables[hash] = _immutableName;
+		return hash;
+	};
+
+	auto storeLibraryHash = [&](std::string const& _libraryName) -> h256
+	{
+		h256 hash(util::keccak256(_libraryName));
+		solAssert(m_libraries.count(hash) == 0 || m_libraries[hash] == _libraryName);
+		m_libraries[hash] = _libraryName;
+		return hash;
+	};
+
+	auto requireValueDefinedForInstruction = [&](std::string const& _name, std::string const& _value)
+	{
+		solRequire(
+			!_value.empty(),
+			AssemblyImportException,
+			"Member 'value' is missing for instruction '" + _name + "', but the instruction needs a value."
+		);
+	};
+
+	auto requireValueUndefinedForInstruction = [&](std::string const& _name, std::string const& _value)
+	{
+		solRequire(
+			_value.empty(),
+			AssemblyImportException,
+			"Member 'value' defined for instruction '" + _name + "', but the instruction does not need a value."
+		);
+	};
+
+	solRequire(srcIndex >= -1 && srcIndex < static_cast<int>(_sourceList.size()), AssemblyImportException, "Source index out of bounds.");
+	if (srcIndex != -1)
+		location.sourceName = sharedSourceName(_sourceList[static_cast<size_t>(srcIndex)]);
+
+	AssemblyItem result(0);
+
+	if (c_instructions.count(name))
+	{
+		AssemblyItem item{c_instructions.at(name), langutil::DebugData::create(location)};
+		if (!jumpType.empty())
+		{
+			if (item.instruction() == Instruction::JUMP || item.instruction() == Instruction::JUMPI)
+			{
+				std::optional<AssemblyItem::JumpType> parsedJumpType = AssemblyItem::parseJumpType(jumpType);
+				if (!parsedJumpType.has_value())
+					solThrow(AssemblyImportException, "Invalid jump type.");
+				item.setJumpType(parsedJumpType.value());
+			}
+			else
+				solThrow(
+					AssemblyImportException,
+					"Member 'jumpType' set on instruction different from JUMP or JUMPI (was set on instruction '" + name + "')"
+				);
+		}
+		requireValueUndefinedForInstruction(name, value);
+		result = item;
+	}
+	else
+	{
+		solRequire(
+			jumpType.empty(),
+			AssemblyImportException,
+			"Member 'jumpType' set on instruction different from JUMP or JUMPI (was set on instruction '" + name + "')"
+		);
+		if (name == "PUSH")
+		{
+			requireValueDefinedForInstruction(name, value);
+			result = {AssemblyItemType::Push, u256("0x" + value)};
+		}
+		else if (name == "PUSH [ErrorTag]")
+		{
+			requireValueUndefinedForInstruction(name, value);
+			result = {AssemblyItemType::PushTag, 0};
+		}
+		else if (name == "PUSH [tag]")
+		{
+			requireValueDefinedForInstruction(name, value);
+			result = {AssemblyItemType::PushTag, u256(value)};
+			// The value has the sub-assembly ID packed above the tag ID, so only the latter is range-checked.
+			updateUsedTags(requireTagIDInRange(result.splitForeignPushTag().second));
+		}
+		else if (name == "PUSH [$]")
+		{
+			requireValueDefinedForInstruction(name, value);
+			result = {AssemblyItemType::PushSub, u256("0x" + value)};
+		}
+		else if (name == "PUSH #[$]")
+		{
+			requireValueDefinedForInstruction(name, value);
+			result = {AssemblyItemType::PushSubSize, u256("0x" + value)};
+		}
+		else if (name == "PUSHSIZE")
+		{
+			requireValueUndefinedForInstruction(name, value);
+			result = {AssemblyItemType::PushProgramSize, 0};
+		}
+		else if (name == "PUSHLIB")
+		{
+			requireValueDefinedForInstruction(name, value);
+			result = {AssemblyItemType::PushLibraryAddress, storeLibraryHash(value)};
+		}
+		else if (name == "PUSHDEPLOYADDRESS")
+		{
+			requireValueUndefinedForInstruction(name, value);
+			result = {AssemblyItemType::PushDeployTimeAddress, 0};
+		}
+		else if (name == "PUSHIMMUTABLE")
+		{
+			requireValueDefinedForInstruction(name, value);
+			result = {AssemblyItemType::PushImmutable, storeImmutableHash(value)};
+		}
+		else if (name == "ASSIGNIMMUTABLE")
+		{
+			requireValueDefinedForInstruction(name, value);
+			result = {AssemblyItemType::AssignImmutable, storeImmutableHash(value)};
+		}
+		else if (name == "tag")
+		{
+			requireValueDefinedForInstruction(name, value);
+			result = {AssemblyItemType::Tag, updateUsedTags(requireTagIDInRange(u256(value)))};
+		}
+		else if (name == "PUSH data")
+		{
+			requireValueDefinedForInstruction(name, value);
+			result = {AssemblyItemType::PushData, u256("0x" + value)};
+		}
+		else if (name == "VERBATIM")
+		{
+			requireValueDefinedForInstruction(name, value);
+			AssemblyItem item(fromHex(value), 0, 0);
+			result = item;
+		}
+		else
+			solThrow(AssemblyImportException, "Invalid opcode (" + name + ")");
+	}
+	result.setLocation(location);
+	result.m_modifierDepth = modifierDepth;
+	return result;
 }
 
 namespace
 {
 
-string locationFromSources(StringMap const& _sourceCodes, SourceLocation const& _location)
+std::string locationFromSources(StringMap const& _sourceCodes, SourceLocation const& _location)
 {
 	if (!_location.hasText() || _sourceCodes.empty())
-		return "";
+		return {};
 
-	auto it = _sourceCodes.find(_location.source->name());
+	auto it = _sourceCodes.find(*_location.sourceName);
 	if (it == _sourceCodes.end())
-		return "";
+		return {};
 
-	string const& source = it->second;
-	if (static_cast<size_t>(_location.start) >= source.size())
-		return "";
-
-	string cut = source.substr(static_cast<size_t>(_location.start), static_cast<size_t>(_location.end - _location.start));
-	auto newLinePos = cut.find_first_of("\n");
-	if (newLinePos != string::npos)
-		cut = cut.substr(0, newLinePos) + "...";
-
-	return cut;
+	return CharStream::singleLineSnippet(it->second, _location);
 }
 
 class Functionalizer
 {
 public:
-	Functionalizer (ostream& _out, string const& _prefix, StringMap const& _sourceCodes, Assembly const& _assembly):
+	Functionalizer (std::ostream& _out, std::string const& _prefix, StringMap const& _sourceCodes, Assembly const& _assembly):
 		m_out(_out), m_prefix(_prefix), m_sourceCodes(_sourceCodes), m_assembly(_assembly)
 	{}
 
-	void feed(AssemblyItem const& _item)
+	void feed(AssemblyItem const& _item, DebugInfoSelection const& _debugInfoSelection)
 	{
 		if (_item.location().isValid() && _item.location() != m_location)
 		{
 			flush();
 			m_location = _item.location();
-			printLocation();
+			printLocation(_debugInfoSelection);
 		}
 
-		string expression = _item.toAssemblyText(m_assembly);
+		std::string expression = _item.toAssemblyText(m_assembly);
 
 		if (!(
 			_item.canBeFunctional() &&
@@ -116,7 +385,7 @@ public:
 		))
 		{
 			flush();
-			m_out << m_prefix << (_item.type() == Tag ? "" : "  ") << expression << endl;
+			m_out << m_prefix << (_item.type() == Tag ? "" : "  ") << expression << std::endl;
 			return;
 		}
 		if (_item.arguments() > 0)
@@ -139,256 +408,365 @@ public:
 
 	void flush()
 	{
-		for (string const& expression: m_pending)
-			m_out << m_prefix << "  " << expression << endl;
+		for (std::string const& expression: m_pending)
+			m_out << m_prefix << "  " << expression << std::endl;
 		m_pending.clear();
 	}
 
-	void printLocation()
+	void printLocation(DebugInfoSelection const& _debugInfoSelection)
 	{
-		if (!m_location.isValid())
+		if (!m_location.isValid() || (!_debugInfoSelection.location && !_debugInfoSelection.snippet))
 			return;
+
 		m_out << m_prefix << "    /*";
-		if (m_location.source)
-			m_out << " \"" + m_location.source->name() + "\"";
-		if (m_location.hasText())
-			m_out << ":" << to_string(m_location.start) + ":" + to_string(m_location.end);
-		m_out << "  " << locationFromSources(m_sourceCodes, m_location);
-		m_out << " */" << endl;
+
+		if (_debugInfoSelection.location)
+		{
+			if (m_location.sourceName)
+				m_out << " " + escapeAndQuoteString(*m_location.sourceName);
+			if (m_location.hasText())
+				m_out << ":" << std::to_string(m_location.start) + ":" + std::to_string(m_location.end);
+		}
+
+		if (_debugInfoSelection.snippet)
+		{
+			if (_debugInfoSelection.location)
+				m_out << "  ";
+
+			m_out << locationFromSources(m_sourceCodes, m_location);
+		}
+
+		m_out << " */" << std::endl;
 	}
 
 private:
 	strings m_pending;
 	SourceLocation m_location;
 
-	ostream& m_out;
-	string const& m_prefix;
+	std::ostream& m_out;
+	std::string const& m_prefix;
 	StringMap const& m_sourceCodes;
 	Assembly const& m_assembly;
 };
 
 }
 
-void Assembly::assemblyStream(ostream& _out, string const& _prefix, StringMap const& _sourceCodes) const
+void Assembly::assemblyStream(
+	std::ostream& _out,
+	DebugInfoSelection const& _debugInfoSelection,
+	std::string const& _prefix,
+	StringMap const& _sourceCodes
+) const
 {
 	Functionalizer f(_out, _prefix, _sourceCodes, *this);
 
 	for (auto const& i: m_items)
-		f.feed(i);
+		f.feed(i, _debugInfoSelection);
 	f.flush();
 
 	if (!m_data.empty() || !m_subs.empty())
 	{
-		_out << _prefix << "stop" << endl;
+		_out << _prefix << "stop" << std::endl;
 		for (auto const& i: m_data)
 			if (u256(i.first) >= m_subs.size())
-				_out << _prefix << "data_" << toHex(u256(i.first)) << " " << toHex(i.second) << endl;
+				_out << _prefix << "data_" << toHex(u256(i.first)) << " " << util::toHex(i.second) << std::endl;
 
 		for (size_t i = 0; i < m_subs.size(); ++i)
 		{
-			_out << endl << _prefix << "sub_" << i << ": assembly {\n";
-			m_subs[i]->assemblyStream(_out, _prefix + "    ", _sourceCodes);
-			_out << _prefix << "}" << endl;
+			_out << std::endl << _prefix << "sub_" << i << ": assembly {\n";
+			m_subs[i]->assemblyStream(_out, _debugInfoSelection, _prefix + "    ", _sourceCodes);
+			_out << _prefix << "}" << std::endl;
 		}
 	}
 
 	if (m_auxiliaryData.size() > 0)
-		_out << endl << _prefix << "auxdata: 0x" << toHex(m_auxiliaryData) << endl;
+		_out << std::endl << _prefix << "auxdata: 0x" << util::toHex(m_auxiliaryData) << std::endl;
 }
 
-string Assembly::assemblyString(StringMap const& _sourceCodes) const
+std::string Assembly::assemblyString(
+	DebugInfoSelection const& _debugInfoSelection,
+	StringMap const& _sourceCodes
+) const
 {
-	ostringstream tmp;
-	assemblyStream(tmp, "", _sourceCodes);
-	return tmp.str();
+	std::ostringstream tmp;
+	assemblyStream(tmp, _debugInfoSelection, "", _sourceCodes);
+	return (_debugInfoSelection.ethdebug ? "/// ethdebug: enabled\n" : "") + tmp.str();
 }
 
-Json::Value Assembly::createJsonValue(string _name, int _source, int _begin, int _end, string _value, string _jumpType)
+Json Assembly::assemblyJSON(std::map<std::string, unsigned> const& _sourceIndices, bool _includeSourceList) const
 {
-	Json::Value value;
-	value["name"] = _name;
-	value["source"] = _source;
-	value["begin"] = _begin;
-	value["end"] = _end;
-	if (!_value.empty())
-		value["value"] = _value;
-	if (!_jumpType.empty())
-		value["jumpType"] = _jumpType;
-	return value;
-}
-
-string Assembly::toStringInHex(u256 _value)
-{
-	std::stringstream hexStr;
-	hexStr << std::uppercase << hex << _value;
-	return hexStr.str();
-}
-
-Json::Value Assembly::assemblyJSON(map<string, unsigned> const& _sourceIndices) const
-{
-	Json::Value root;
-
-	Json::Value& collection = root[".code"] = Json::arrayValue;
-	for (AssemblyItem const& i: m_items)
+	Json root;
+	root[".code"] = Json::array();
+	Json& code = root[".code"];
+	for (AssemblyItem const& item: m_items)
 	{
 		int sourceIndex = -1;
-		if (i.location().source)
+		if (item.location().sourceName)
 		{
-			auto iter = _sourceIndices.find(i.location().source->name());
+			auto iter = _sourceIndices.find(*item.location().sourceName);
 			if (iter != _sourceIndices.end())
 				sourceIndex = static_cast<int>(iter->second);
 		}
 
-		switch (i.type())
+		auto [name, data] = item.nameAndData(m_evmVersion);
+		Json jsonItem;
+		jsonItem["name"] = name;
+		jsonItem["begin"] = item.location().start;
+		jsonItem["end"] = item.location().end;
+		if (item.m_modifierDepth != 0)
+			jsonItem["modifierDepth"] = static_cast<int>(item.m_modifierDepth);
+		std::string jumpType = item.getJumpTypeAsString();
+		if (!jumpType.empty())
+			jsonItem["jumpType"] = jumpType;
+		if (name == "PUSHLIB")
+			data = m_libraries.at(h256(data));
+		else if (name == "PUSHIMMUTABLE" || name == "ASSIGNIMMUTABLE")
+			data = m_immutables.at(h256(data));
+		if (!data.empty())
+			jsonItem["value"] = data;
+		jsonItem["source"] = sourceIndex;
+		code.emplace_back(std::move(jsonItem));
+
+		if (item.type() == AssemblyItemType::Tag)
 		{
-		case Operation:
-			collection.append(
-				createJsonValue(
-					instructionInfo(i.instruction()).name,
-					sourceIndex,
-					i.location().start,
-					i.location().end,
-					i.getJumpTypeAsString())
-				);
-			break;
-		case Push:
-			collection.append(
-				createJsonValue("PUSH", sourceIndex, i.location().start, i.location().end, toStringInHex(i.data()), i.getJumpTypeAsString()));
-			break;
-		case PushString:
-			collection.append(
-				createJsonValue("PUSH tag", sourceIndex, i.location().start, i.location().end, m_strings.at(h256(i.data()))));
-			break;
-		case PushTag:
-			if (i.data() == 0)
-				collection.append(
-					createJsonValue("PUSH [ErrorTag]", sourceIndex, i.location().start, i.location().end, ""));
-			else
-				collection.append(
-					createJsonValue("PUSH [tag]", sourceIndex, i.location().start, i.location().end, toString(i.data())));
-			break;
-		case PushSub:
-			collection.append(
-				createJsonValue("PUSH [$]", sourceIndex, i.location().start, i.location().end, toString(h256(i.data()))));
-			break;
-		case PushSubSize:
-			collection.append(
-				createJsonValue("PUSH #[$]", sourceIndex, i.location().start, i.location().end, toString(h256(i.data()))));
-			break;
-		case PushProgramSize:
-			collection.append(
-				createJsonValue("PUSHSIZE", sourceIndex, i.location().start, i.location().end));
-			break;
-		case PushLibraryAddress:
-			collection.append(
-				createJsonValue("PUSHLIB", sourceIndex, i.location().start, i.location().end, m_libraries.at(h256(i.data())))
-			);
-			break;
-		case PushDeployTimeAddress:
-			collection.append(
-				createJsonValue("PUSHDEPLOYADDRESS", sourceIndex, i.location().start, i.location().end)
-			);
-			break;
-		case PushImmutable:
-			collection.append(createJsonValue(
-				"PUSHIMMUTABLE",
-				sourceIndex,
-				i.location().start,
-				i.location().end,
-				m_immutables.at(h256(i.data()))
-			));
-			break;
-		case AssignImmutable:
-			collection.append(createJsonValue(
-				"ASSIGNIMMUTABLE",
-				sourceIndex,
-				i.location().start,
-				i.location().end,
-				m_immutables.at(h256(i.data()))
-			));
-			break;
-		case Tag:
-			collection.append(
-				createJsonValue("tag", sourceIndex, i.location().start, i.location().end, toString(i.data())));
-			collection.append(
-				createJsonValue("JUMPDEST", sourceIndex, i.location().start, i.location().end));
-			break;
-		case PushData:
-			collection.append(createJsonValue("PUSH data", sourceIndex, i.location().start, i.location().end, toStringInHex(i.data())));
-			break;
-		default:
-			assertThrow(false, InvalidOpcode, "");
+			Json jumpdest;
+			jumpdest["name"] = "JUMPDEST";
+			jumpdest["begin"] = item.location().start;
+			jumpdest["end"] = item.location().end;
+			jumpdest["source"] = sourceIndex;
+			if (item.m_modifierDepth != 0)
+				jumpdest["modifierDepth"] = static_cast<int>(item.m_modifierDepth);
+			code.emplace_back(std::move(jumpdest));
 		}
+	}
+	if (_includeSourceList)
+	{
+		root["sourceList"] = Json::array();
+		Json& jsonSourceList = root["sourceList"];
+		unsigned maxSourceIndex = 0;
+		for (auto const& [sourceName, sourceIndex]: _sourceIndices)
+		{
+			maxSourceIndex = std::max(sourceIndex, maxSourceIndex);
+			jsonSourceList[sourceIndex] = sourceName;
+		}
+		solAssert(maxSourceIndex + 1 >= _sourceIndices.size());
+		solRequire(
+			_sourceIndices.size() == 0 || _sourceIndices.size() == maxSourceIndex + 1,
+			AssemblyImportException,
+			"The 'sourceList' array contains invalid 'null' item."
+		);
 	}
 
 	if (!m_data.empty() || !m_subs.empty())
 	{
-		Json::Value& data = root[".data"] = Json::objectValue;
+		root[".data"] = Json::object();
+		Json& data = root[".data"];
 		for (auto const& i: m_data)
 			if (u256(i.first) >= m_subs.size())
-				data[toStringInHex((u256)i.first)] = toHex(i.second);
+				data[util::toHex(toBigEndian((u256)i.first), util::HexPrefix::DontAdd, util::HexCase::Upper)] = util::toHex(i.second);
 
 		for (size_t i = 0; i < m_subs.size(); ++i)
 		{
 			std::stringstream hexStr;
-			hexStr << hex << i;
-			data[hexStr.str()] = m_subs[i]->assemblyJSON(_sourceIndices);
+			hexStr << std::hex << i;
+			data[hexStr.str()] = m_subs[i]->assemblyJSON(_sourceIndices, /*_includeSourceList = */false);
 		}
 	}
 
-	if (m_auxiliaryData.size() > 0)
-		root[".auxdata"] = toHex(m_auxiliaryData);
+	if (!m_auxiliaryData.empty())
+		root[".auxdata"] = util::toHex(m_auxiliaryData);
 
 	return root;
 }
 
-AssemblyItem Assembly::namedTag(string const& _name)
+std::pair<std::shared_ptr<Assembly>, std::vector<std::string>> Assembly::fromJSON(
+	Json const& _json,
+	std::vector<std::string> const& _sourceList,
+	size_t _level,
+	EVMVersion _evmVersion
+)
 {
-	assertThrow(!_name.empty(), AssemblyException, "Empty named tag.");
-	if (!m_namedTags.count(_name))
-		m_namedTags[_name] = static_cast<size_t>(newTag().data());
-	return AssemblyItem{Tag, m_namedTags.at(_name)};
+	solRequire(_json.is_object(), AssemblyImportException, "Supplied JSON is not an object.");
+	static std::set<std::string> const validMembers{".code", ".data", ".auxdata", "sourceList"};
+	for (auto const& [attribute, _]: _json.items())
+		solRequire(validMembers.count(attribute), AssemblyImportException, "Unknown attribute '" + attribute + "'.");
+
+	if (_level == 0)
+	{
+		if (_json.contains("sourceList"))
+		{
+			solRequire(_json["sourceList"].is_array(), AssemblyImportException, "Optional member 'sourceList' is not an array.");
+			for (Json const& sourceName: _json["sourceList"])
+			{
+				solRequire(!sourceName.is_null(), AssemblyImportException, "The 'sourceList' array contains invalid 'null' item.");
+				solRequire(
+					sourceName.is_string(),
+					AssemblyImportException,
+					"The 'sourceList' array contains an item that is not a string."
+				);
+			}
+		}
+	}
+	else
+		solRequire(
+			!_json.contains("sourceList"),
+			AssemblyImportException,
+			"Member 'sourceList' may only be present in the root JSON object."
+		);
+
+	auto result = std::make_shared<Assembly>(_evmVersion, _level == 0 /* _creation */, "" /* _name */);
+	std::vector<std::string> parsedSourceList;
+	if (_json.contains("sourceList"))
+	{
+		solAssert(_level == 0);
+		solAssert(_sourceList.empty());
+		for (Json const& sourceName: _json["sourceList"])
+		{
+			solRequire(
+				std::find(parsedSourceList.begin(), parsedSourceList.end(), sourceName.get<std::string>()) == parsedSourceList.end(),
+				AssemblyImportException,
+				"Items in 'sourceList' array are not unique."
+			);
+			parsedSourceList.emplace_back(sourceName.get<std::string>());
+		}
+	}
+
+	solRequire(_json.contains(".code"), AssemblyImportException, "Member '.code' is missing.");
+	solRequire(_json[".code"].is_array(), AssemblyImportException, "Member '.code' is not an array.");
+	for (Json const& codeItem: _json[".code"])
+		solRequire(codeItem.is_object(), AssemblyImportException, "The '.code' array contains an item that is not an object.");
+
+	result->importAssemblyItemsFromJSON(_json[".code"], _level == 0 ? parsedSourceList : _sourceList);
+
+	if (_json.contains(".auxdata"))
+	{
+		solRequire(_json[".auxdata"].is_string(), AssemblyImportException, "Optional member '.auxdata' is not a string.");
+		result->m_auxiliaryData = fromHex(_json[".auxdata"].get<std::string>());
+		solRequire(!result->m_auxiliaryData.empty(), AssemblyImportException, "Optional member '.auxdata' is not a valid hexadecimal string.");
+	}
+
+	if (_json.contains(".data"))
+	{
+		solRequire(_json[".data"].is_object(), AssemblyImportException, "Optional member '.data' is not an object.");
+		Json const& data = _json[".data"];
+		std::map<size_t, std::shared_ptr<Assembly>> subAssemblies;
+		for (auto const& [key, value] : data.items())
+		{
+			if (value.is_string())
+			{
+				solRequire(
+					value.get<std::string>().empty() || !fromHex(value.get<std::string>()).empty(),
+					AssemblyImportException,
+					"The value for key '" + key + "' inside '.data' is not a valid hexadecimal string."
+				);
+				result->m_data[h256(fromHex(key))] = fromHex(value.get<std::string>());
+			}
+			else if (value.is_object())
+			{
+				size_t index{};
+				try
+				{
+					// Using signed variant because stoul() still accepts negative numbers and
+					// just lets them wrap around.
+					int parsedDataItemID = std::stoi(key, nullptr, 16);
+					solRequire(parsedDataItemID >= 0, AssemblyImportException, "The key '" + key + "' inside '.data' is out of the supported integer range.");
+					index = static_cast<size_t>(parsedDataItemID);
+				}
+				catch (std::invalid_argument const&)
+				{
+					solThrow(AssemblyImportException, "The key '" + key + "' inside '.data' is not an integer.");
+				}
+				catch (std::out_of_range const&)
+				{
+					solThrow(AssemblyImportException, "The key '" + key + "' inside '.data' is out of the supported integer range.");
+				}
+
+				auto [subAssembly, emptySourceList] =
+					Assembly::fromJSON(value, _level == 0 ? parsedSourceList : _sourceList, _level + 1, _evmVersion);
+				solAssert(subAssembly);
+				solAssert(emptySourceList.empty());
+				solAssert(subAssemblies.count(index) == 0);
+				subAssemblies[index] = subAssembly;
+			}
+			else
+				solThrow(AssemblyImportException, "The value of key '" + key + "' inside '.data' is neither a hex string nor an object.");
+		}
+
+		if (!subAssemblies.empty())
+			solRequire(
+				ranges::max(subAssemblies | ranges::views::keys) == subAssemblies.size() - 1,
+				AssemblyImportException,
+				fmt::format(
+					"Invalid subassembly indices in '.data'. Not all numbers between 0 and {} are present.",
+					subAssemblies.size() - 1
+				)
+			);
+
+		result->m_subs = subAssemblies | ranges::views::values | ranges::to<std::vector>;
+	}
+
+	if (_level == 0)
+		result->encodeAllPossibleSubPathsInAssemblyTree();
+
+	return std::make_pair(result, _level == 0 ? parsedSourceList : std::vector<std::string>{});
 }
 
-AssemblyItem Assembly::newPushLibraryAddress(string const& _identifier)
+void Assembly::encodeAllPossibleSubPathsInAssemblyTree(std::vector<SubAssemblyID> _pathFromRoot, std::vector<Assembly*> _assembliesOnPath)
+{
+	_assembliesOnPath.push_back(this);
+	for (_pathFromRoot.push_back(SubAssemblyID{0}); _pathFromRoot.back().value < m_subs.size(); ++_pathFromRoot.back().value)
+	{
+		for (size_t distanceFromRoot = 0; distanceFromRoot < _assembliesOnPath.size(); ++distanceFromRoot)
+			_assembliesOnPath[distanceFromRoot]->encodeSubPath(
+				_pathFromRoot | ranges::views::drop_exactly(distanceFromRoot) | ranges::to<std::vector>
+			);
+
+		m_subs[_pathFromRoot.back().asIndex()]->encodeAllPossibleSubPathsInAssemblyTree(_pathFromRoot, _assembliesOnPath);
+	}
+}
+
+std::shared_ptr<std::string const> Assembly::sharedSourceName(std::string const& _name) const
+{
+	if (s_sharedSourceNames.find(_name) == s_sharedSourceNames.end())
+		s_sharedSourceNames[_name] = std::make_shared<std::string>(_name);
+
+	return s_sharedSourceNames[_name];
+}
+
+AssemblyItem Assembly::namedTag(std::string const& _name, size_t _params, size_t _returns, std::optional<uint64_t> _sourceID)
+{
+	assertThrow(!_name.empty(), AssemblyException, "Empty named tag.");
+	if (m_namedTags.count(_name))
+	{
+		assertThrow(m_namedTags.at(_name).params == _params, AssemblyException, "");
+		assertThrow(m_namedTags.at(_name).returns == _returns, AssemblyException, "");
+		assertThrow(m_namedTags.at(_name).sourceID == _sourceID, AssemblyException, "");
+	}
+	else
+		m_namedTags[_name] = {static_cast<size_t>(newTag().data()), _sourceID, _params, _returns};
+	return AssemblyItem{Tag, m_namedTags.at(_name).id};
+}
+
+AssemblyItem Assembly::newPushLibraryAddress(std::string const& _identifier)
 {
 	h256 h(util::keccak256(_identifier));
 	m_libraries[h] = _identifier;
 	return AssemblyItem{PushLibraryAddress, h};
 }
 
-AssemblyItem Assembly::newPushImmutable(string const& _identifier)
+AssemblyItem Assembly::newPushImmutable(std::string const& _identifier)
 {
 	h256 h(util::keccak256(_identifier));
 	m_immutables[h] = _identifier;
 	return AssemblyItem{PushImmutable, h};
 }
 
-AssemblyItem Assembly::newImmutableAssignment(string const& _identifier)
+AssemblyItem Assembly::newImmutableAssignment(std::string const& _identifier)
 {
 	h256 h(util::keccak256(_identifier));
 	m_immutables[h] = _identifier;
 	return AssemblyItem{AssignImmutable, h};
 }
-
-Assembly& Assembly::optimise(bool _enable, EVMVersion _evmVersion, bool _isCreation, size_t _runs)
-{
-	OptimiserSettings settings;
-	settings.isCreation = _isCreation;
-	settings.runJumpdestRemover = true;
-	settings.runPeephole = true;
-	if (_enable)
-	{
-		settings.runDeduplicate = true;
-		settings.runCSE = true;
-		settings.runConstantOptimiser = true;
-	}
-	settings.evmVersion = _evmVersion;
-	settings.expectedExecutionsPerDeployment = _runs;
-	optimise(settings);
-	return *this;
-}
-
 
 Assembly& Assembly::optimise(OptimiserSettings const& _settings)
 {
@@ -396,31 +774,42 @@ Assembly& Assembly::optimise(OptimiserSettings const& _settings)
 	return *this;
 }
 
-map<u256, u256> Assembly::optimiseInternal(
+std::map<u256, u256> const& Assembly::optimiseInternal(
 	OptimiserSettings const& _settings,
 	std::set<size_t> _tagsReferencedFromOutside
 )
 {
+	if (m_tagReplacements)
+		return *m_tagReplacements;
+
 	// Run optimisation for sub-assemblies.
-	for (size_t subId = 0; subId < m_subs.size(); ++subId)
+	for (SubAssemblyID subID{0}; subID.value < m_subs.size(); ++subID.value)
 	{
-		OptimiserSettings settings = _settings;
-		// Disable creation mode for sub-assemblies.
-		settings.isCreation = false;
-		map<u256, u256> subTagReplacements = m_subs[subId]->optimiseInternal(
-			settings,
-			JumpdestRemover::referencedTags(m_items, subId)
+		Assembly& sub = *m_subs[subID.asIndex()];
+		std::map<u256, u256> const& subTagReplacements = sub.optimiseInternal(
+			_settings,
+			JumpdestRemover::referencedTags(m_items, subID)
 		);
 		// Apply the replacements (can be empty).
-		BlockDeduplicator::applyTagReplacement(m_items, subTagReplacements, subId);
+		BlockDeduplicator::applyTagReplacement(m_items, subTagReplacements, subID);
 	}
 
-	map<u256, u256> tagReplacements;
+	std::map<u256, u256> tagReplacements;
 	// Iterate until no new optimisation possibilities are found.
 	for (unsigned count = 1; count > 0;)
 	{
 		count = 0;
 
+		if (_settings.runInliner)
+		{
+			Inliner{
+				m_items,
+				_tagsReferencedFromOutside,
+				_settings.expectedExecutionsPerDeployment,
+				isCreation(),
+				m_evmVersion
+			}.optimise();
+		}
 		if (_settings.runJumpdestRemover)
 		{
 			JumpdestRemover jumpdestOpt{m_items};
@@ -430,7 +819,7 @@ map<u256, u256> Assembly::optimiseInternal(
 
 		if (_settings.runPeephole)
 		{
-			PeepholeOptimiser peepOpt{m_items};
+			PeepholeOptimiser peepOpt{m_items, m_evmVersion};
 			while (peepOpt.optimise())
 			{
 				count++;
@@ -447,7 +836,7 @@ map<u256, u256> Assembly::optimiseInternal(
 				for (auto const& replacement: deduplicator.replacedTags())
 				{
 					assertThrow(
-						replacement.first <= numeric_limits<size_t>::max() && replacement.second <= numeric_limits<size_t>::max(),
+						replacement.first <= std::numeric_limits<size_t>::max() && replacement.second <= std::numeric_limits<size_t>::max(),
 						OptimizerException,
 						"Invalid tag replacement."
 					);
@@ -471,13 +860,15 @@ map<u256, u256> Assembly::optimiseInternal(
 			// function types that can be stored in storage.
 			AssemblyItems optimisedItems;
 
-			bool usesMSize = (find(m_items.begin(), m_items.end(), AssemblyItem{Instruction::MSIZE}) != m_items.end());
+			bool usesMSize = ranges::any_of(m_items, [](AssemblyItem const& _i) {
+				return _i == AssemblyItem{Instruction::MSIZE} || _i.type() == VerbatimBytecode;
+			});
 
 			auto iter = m_items.begin();
 			while (iter != m_items.end())
 			{
 				KnownState emptyState;
-				CommonSubexpressionEliminator eliminator{emptyState};
+				CommonSubexpressionEliminator eliminator{emptyState, m_evmVersion};
 				auto orig = iter;
 				iter = eliminator.feedItems(iter, m_items.end(), usesMSize);
 				bool shouldReplace = false;
@@ -508,7 +899,7 @@ map<u256, u256> Assembly::optimiseInternal(
 			}
 			if (optimisedItems.size() < m_items.size())
 			{
-				m_items = move(optimisedItems);
+				m_items = std::move(optimisedItems);
 				count++;
 			}
 		}
@@ -516,28 +907,118 @@ map<u256, u256> Assembly::optimiseInternal(
 
 	if (_settings.runConstantOptimiser)
 		ConstantOptimisationMethod::optimiseConstants(
-			_settings.isCreation,
-			_settings.isCreation ? 1 : _settings.expectedExecutionsPerDeployment,
-			_settings.evmVersion,
+			isCreation(),
+			isCreation() ? 1 : _settings.expectedExecutionsPerDeployment,
+			m_evmVersion,
 			*this
 		);
 
-	return tagReplacements;
+	m_tagReplacements = std::move(tagReplacements);
+	return *m_tagReplacements;
+}
+
+namespace
+{
+template<typename ValueT>
+void setBigEndian(bytes& _dest, size_t _offset, size_t _size, ValueT _value)
+{
+	assertThrow(numberEncodingSize(_value) <= _size, AssemblyException, "");
+	toBigEndian(_value, bytesRef(_dest.data() + _offset, _size));
+}
+
+template<typename ValueT>
+void appendBigEndian(bytes& _dest, size_t _size, ValueT _value)
+{
+	_dest.resize(_dest.size() + _size);
+	setBigEndian(_dest, _dest.size() - _size, _size, _value);
+}
 }
 
 LinkerObject const& Assembly::assemble() const
 {
-	assertThrow(!m_invalid, AssemblyException, "Attempted to assemble invalid Assembly object.");
+	solRequire(!m_invalid, AssemblyException, "Attempted to assemble invalid Assembly object.");
+	// Return the already assembled object, if present.
+	if (!m_assembledObject.bytecode.empty())
+		return m_assembledObject;
+
+	// Otherwise ensure the object is actually clear.
+	solRequire(m_assembledObject.linkReferences.empty(), AssemblyException, "Unexpected link references.");
+
+	return assembleLegacy();
+}
+
+[[nodiscard]] bytes Assembly::assembleOperation(AssemblyItem const& _item) const
+{
+	// solidity::evmasm::Instructions underlying type is uint8_t
+	// TODO: Change to std::to_underlying since C++23
+	return {static_cast<uint8_t>(_item.instruction())};
+}
+
+[[nodiscard]] bytes Assembly::assemblePush(AssemblyItem const& _item) const
+{
+	bytes ret;
+	unsigned pushValueSize = numberEncodingSize(_item.data());
+	if (pushValueSize == 0 && !m_evmVersion.hasPush0())
+		pushValueSize = 1;
+
+	// solidity::evmasm::Instructions underlying type is uint8_t
+	// TODO: Change to std::to_underlying since C++23
+	ret.push_back(static_cast<uint8_t>(pushInstruction(pushValueSize)));
+	if (pushValueSize > 0)
+		appendBigEndian(ret, pushValueSize, _item.data());
+
+	return ret;
+}
+
+[[nodiscard]] std::pair<bytes, Assembly::LinkRef> Assembly::assemblePushLibraryAddress(AssemblyItem const& _item, size_t _pos) const
+{
+	return {
+		// solidity::evmasm::Instructions underlying type is uint8_t
+		// TODO: Change to std::to_underlying since C++23
+		bytes(1, static_cast<uint8_t>(Instruction::PUSH20)) + bytes(20),
+		{_pos + 1, m_libraries.at(_item.data())}
+	};
+}
+
+[[nodiscard]] bytes Assembly::assembleVerbatimBytecode(AssemblyItem const& item) const
+{
+	return item.verbatimData();
+}
+
+[[nodiscard]] bytes Assembly::assemblePushDeployTimeAddress() const
+{
+	// solidity::evmasm::Instructions underlying type is uint8_t
+	// TODO: Change to std::to_underlying since C++23
+	return bytes(1, static_cast<uint8_t>(Instruction::PUSH20)) + bytes(20);
+}
+
+[[nodiscard]] bytes Assembly::assembleTag(AssemblyItem const& _item, size_t _pos, bool _addJumpDest) const
+{
+	solRequire(_item.data() != 0, AssemblyException, "Invalid tag position.");
+	solRequire(_item.splitForeignPushTag().first.empty(), AssemblyException, "Foreign tag.");
+	solRequire(_pos < 0xffffffffL, AssemblyException, "Tag too large.");
+	size_t tagId = static_cast<size_t>(_item.data());
+	solRequire(m_tagPositionsInBytecode[tagId] == std::numeric_limits<size_t>::max(), AssemblyException, "Duplicate tag position.");
+	m_tagPositionsInBytecode[tagId] = _pos;
+
+	// solidity::evmasm::Instructions underlying type is uint8_t
+	// TODO: Change to std::to_underlying since C++23
+	return _addJumpDest ? bytes(1, static_cast<uint8_t>(Instruction::JUMPDEST)) : bytes();
+}
+
+LinkerObject const& Assembly::assembleLegacy() const
+{
+	solAssert(!m_invalid);
 	// Return the already assembled object, if present.
 	if (!m_assembledObject.bytecode.empty())
 		return m_assembledObject;
 	// Otherwise ensure the object is actually clear.
-	assertThrow(m_assembledObject.linkReferences.empty(), AssemblyException, "Unexpected link references.");
+	solAssert(m_assembledObject.linkReferences.empty());
 
 	LinkerObject& ret = m_assembledObject;
 
 	size_t subTagSize = 1;
-	map<u256, pair<string, vector<size_t>>> immutableReferencesBySub;
+	std::map<u256, LinkerObject::ImmutableRefs> immutableReferencesBySub;
 	for (auto const& sub: m_subs)
 	{
 		auto const& linkerObject = sub->assemble();
@@ -551,20 +1032,20 @@ LinkerObject const& Assembly::assemble() const
 			immutableReferencesBySub = linkerObject.immutableReferences;
 		}
 		for (size_t tagPos: sub->m_tagPositionsInBytecode)
-			if (tagPos != numeric_limits<size_t>::max() && tagPos > subTagSize)
-				subTagSize = tagPos;
+			if (tagPos != std::numeric_limits<size_t>::max() && numberEncodingSize(tagPos) > subTagSize)
+				subTagSize = numberEncodingSize(tagPos);
 	}
 
 	bool setsImmutables = false;
 	bool pushesImmutables = false;
 
-	for (auto const& i: m_items)
-		if (i.type() == AssignImmutable)
+	for (auto const& item: m_items)
+		if (item.type() == AssignImmutable)
 		{
-			i.setImmutableOccurrences(immutableReferencesBySub[i.data()].second.size());
+			item.setImmutableOccurrences(immutableReferencesBySub[item.data()].second.size());
 			setsImmutables = true;
 		}
-		else if (i.type() == PushImmutable)
+		else if (item.type() == PushImmutable)
 			pushesImmutables = true;
 	if (setsImmutables || pushesImmutables)
 		assertThrow(
@@ -573,80 +1054,77 @@ LinkerObject const& Assembly::assemble() const
 			"Cannot push and assign immutables in the same assembly subroutine."
 		);
 
-	unsigned bytesRequiredForCode = bytesRequired(static_cast<unsigned>(subTagSize));
-	m_tagPositionsInBytecode = vector<size_t>(m_usedTags, numeric_limits<size_t>::max());
-	map<size_t, pair<size_t, size_t>> tagRef;
-	multimap<h256, unsigned> dataRef;
-	multimap<size_t, size_t> subRef;
-	vector<unsigned> sizeRef; ///< Pointers to code locations where the size of the program is inserted
-	unsigned bytesPerTag = util::bytesRequired(bytesRequiredForCode);
-	uint8_t tagPush = static_cast<uint8_t>(pushInstruction(bytesPerTag));
+	unsigned bytesRequiredForCode = codeSize(static_cast<unsigned>(subTagSize));
+	m_tagPositionsInBytecode = std::vector<size_t>(m_usedTags, std::numeric_limits<size_t>::max());
+	unsigned bytesPerTag = numberEncodingSize(bytesRequiredForCode);
+	// Adjust bytesPerTag for references to sub assemblies.
+	for (AssemblyItem const& item: m_items)
+		if (item.type() == PushTag)
+		{
+			auto [subId, tagId] = item.splitForeignPushTag();
+			if (subId.empty())
+				continue;
+			solAssert(subId.value < m_subs.size(), "Invalid sub id");
+			auto subTagPosition = m_subs[subId.asIndex()]->m_tagPositionsInBytecode.at(tagId);
+			assertThrow(subTagPosition != std::numeric_limits<size_t>::max(), AssemblyException, "Reference to tag without position.");
+			bytesPerTag = std::max(bytesPerTag, numberEncodingSize(subTagPosition));
+		}
 
 	unsigned bytesRequiredIncludingData = bytesRequiredForCode + 1 + static_cast<unsigned>(m_auxiliaryData.size());
 	for (auto const& sub: m_subs)
 		bytesRequiredIncludingData += static_cast<unsigned>(sub->assemble().bytecode.size());
 
-	unsigned bytesPerDataRef = util::bytesRequired(bytesRequiredIncludingData);
-	uint8_t dataRefPush = static_cast<uint8_t>(pushInstruction(bytesPerDataRef));
+	unsigned bytesPerDataRef = numberEncodingSize(bytesRequiredIncludingData);
 	ret.bytecode.reserve(bytesRequiredIncludingData);
 
-	for (AssemblyItem const& i: m_items)
+	TagRefs tagRefs;
+	DataRefs dataRefs;
+	SubAssemblyRefs subRefs;
+	ProgramSizeRefs sizeRefs;
+	uint8_t tagPush = static_cast<uint8_t>(pushInstruction(bytesPerTag));
+	uint8_t dataRefPush = static_cast<uint8_t>(pushInstruction(bytesPerDataRef));
+
+	LinkerObject::CodeSectionLocation codeSectionLocation;
+	codeSectionLocation.instructionLocations.reserve(m_items.size());
+	codeSectionLocation.start = 0;
+	for (auto const& [assemblyItemIndex, item]: m_items | ranges::views::enumerate)
 	{
+		// collect instruction locations via side effects
+		InstructionLocationEmitter instructionLocationEmitter(codeSectionLocation.instructionLocations, ret.bytecode, assemblyItemIndex);
 		// store position of the invalid jump destination
-		if (i.type() != Tag && m_tagPositionsInBytecode[0] == numeric_limits<size_t>::max())
+		if (item.type() != Tag && m_tagPositionsInBytecode[0] == std::numeric_limits<size_t>::max())
 			m_tagPositionsInBytecode[0] = ret.bytecode.size();
 
-		switch (i.type())
+		switch (item.type())
 		{
 		case Operation:
-			ret.bytecode.push_back(static_cast<uint8_t>(i.instruction()));
+			ret.bytecode += assembleOperation(item);
 			break;
-		case PushString:
-		{
-			ret.bytecode.push_back(static_cast<uint8_t>(Instruction::PUSH32));
-			unsigned ii = 0;
-			for (auto j: m_strings.at(h256(i.data())))
-				if (++ii > 32)
-					break;
-				else
-					ret.bytecode.push_back(uint8_t(j));
-			while (ii++ < 32)
-				ret.bytecode.push_back(0);
-			break;
-		}
 		case Push:
-		{
-			unsigned b = max<unsigned>(1, util::bytesRequired(i.data()));
-			ret.bytecode.push_back(static_cast<uint8_t>(pushInstruction(b)));
-			ret.bytecode.resize(ret.bytecode.size() + b);
-			bytesRef byr(&ret.bytecode.back() + 1 - b, b);
-			toBigEndian(i.data(), byr);
+			ret.bytecode += assemblePush(item);
 			break;
-		}
 		case PushTag:
-		{
 			ret.bytecode.push_back(tagPush);
-			tagRef[ret.bytecode.size()] = i.splitForeignPushTag();
+			tagRefs[ret.bytecode.size()] = item.splitForeignPushTag();
 			ret.bytecode.resize(ret.bytecode.size() + bytesPerTag);
 			break;
-		}
 		case PushData:
 			ret.bytecode.push_back(dataRefPush);
-			dataRef.insert(make_pair(h256(i.data()), ret.bytecode.size()));
+			dataRefs.insert(std::make_pair(h256(item.data()), ret.bytecode.size()));
 			ret.bytecode.resize(ret.bytecode.size() + bytesPerDataRef);
 			break;
 		case PushSub:
-			assertThrow(i.data() <= numeric_limits<size_t>::max(), AssemblyException, "");
+			solAssert(item.data() <= std::numeric_limits<SubAssemblyID::ValueType>::max());
 			ret.bytecode.push_back(dataRefPush);
-			subRef.insert(make_pair(static_cast<size_t>(i.data()), ret.bytecode.size()));
+			subRefs.emplace(SubAssemblyID{item.data()}, ret.bytecode.size());
 			ret.bytecode.resize(ret.bytecode.size() + bytesPerDataRef);
 			break;
 		case PushSubSize:
 		{
-			assertThrow(i.data() <= numeric_limits<size_t>::max(), AssemblyException, "");
-			auto s = subAssemblyById(static_cast<size_t>(i.data()))->assemble().bytecode.size();
-			i.setPushedValue(u256(s));
-			unsigned b = max<unsigned>(1, util::bytesRequired(s));
+			solAssert(item.data() <= std::numeric_limits<SubAssemblyID::ValueType>::max());
+			auto s = subAssemblyById(SubAssemblyID{item.data()})->assemble().bytecode.size();
+			item.setPushedValue(u256(s));
+			unsigned b = std::max<unsigned>(1, numberEncodingSize(s));
 			ret.bytecode.push_back(static_cast<uint8_t>(pushInstruction(b)));
 			ret.bytecode.resize(ret.bytecode.size() + b);
 			bytesRef byr(&ret.bytecode.back() + 1 - b, b);
@@ -654,89 +1132,146 @@ LinkerObject const& Assembly::assemble() const
 			break;
 		}
 		case PushProgramSize:
-		{
 			ret.bytecode.push_back(dataRefPush);
-			sizeRef.push_back(static_cast<unsigned>(ret.bytecode.size()));
+			sizeRefs.push_back(static_cast<unsigned>(ret.bytecode.size()));
 			ret.bytecode.resize(ret.bytecode.size() + bytesPerDataRef);
 			break;
-		}
 		case PushLibraryAddress:
-			ret.bytecode.push_back(static_cast<uint8_t>(Instruction::PUSH20));
-			ret.linkReferences[ret.bytecode.size()] = m_libraries.at(i.data());
-			ret.bytecode.resize(ret.bytecode.size() + 20);
+		{
+			auto const [bytecode, linkRef] = assemblePushLibraryAddress(item, ret.bytecode.size());
+			ret.bytecode += bytecode;
+			ret.linkReferences.insert(linkRef);
 			break;
+		}
 		case PushImmutable:
 			ret.bytecode.push_back(static_cast<uint8_t>(Instruction::PUSH32));
-			ret.immutableReferences[i.data()].first = m_immutables.at(i.data());
-			ret.immutableReferences[i.data()].second.emplace_back(ret.bytecode.size());
+			// Maps keccak back to the "identifier" std::string of that immutable.
+			ret.immutableReferences[item.data()].first = m_immutables.at(item.data());
+			// Record the bytecode offset of the PUSH32 argument.
+			ret.immutableReferences[item.data()].second.emplace_back(ret.bytecode.size());
+			// Advance bytecode by 32 bytes (default initialized).
 			ret.bytecode.resize(ret.bytecode.size() + 32);
 			break;
+		case VerbatimBytecode:
+			ret.bytecode += assembleVerbatimBytecode(item);
+			break;
 		case AssignImmutable:
-			for (auto const& offset: immutableReferencesBySub[i.data()].second)
+		{
+			// Expect 2 elements on stack (source, dest_base)
+			auto const& offsets = immutableReferencesBySub[item.data()].second;
+			for (size_t i = 0; i < offsets.size(); ++i)
 			{
-				ret.bytecode.push_back(static_cast<uint8_t>(Instruction::DUP1));
+				if (i != offsets.size() - 1)
+				{
+					ret.bytecode.push_back(static_cast<uint8_t>(Instruction::DUP2));
+					// This item type decomposes into multiple evm instructions, so we manually call emit()
+					instructionLocationEmitter.emit();
+					ret.bytecode.push_back(static_cast<uint8_t>(Instruction::DUP2));
+					instructionLocationEmitter.emit();
+				}
 				// TODO: should we make use of the constant optimizer methods for pushing the offsets?
-				bytes offsetBytes = toCompactBigEndian(u256(offset));
+				bytes offsetBytes = toCompactBigEndian(u256(offsets[i]));
 				ret.bytecode.push_back(static_cast<uint8_t>(pushInstruction(static_cast<unsigned>(offsetBytes.size()))));
 				ret.bytecode += offsetBytes;
+				instructionLocationEmitter.emit();
+				ret.bytecode.push_back(static_cast<uint8_t>(Instruction::ADD));
+				instructionLocationEmitter.emit();
 				ret.bytecode.push_back(static_cast<uint8_t>(Instruction::MSTORE));
+				// No emit needed here, it's taken care of by the destructor of instructionLocationEmitter.
 			}
-			immutableReferencesBySub.erase(i.data());
-			ret.bytecode.push_back(static_cast<uint8_t>(Instruction::POP));
+			if (offsets.empty())
+			{
+				ret.bytecode.push_back(static_cast<uint8_t>(Instruction::POP));
+				instructionLocationEmitter.emit();
+				ret.bytecode.push_back(static_cast<uint8_t>(Instruction::POP));
+				// no emit needed here, it's taken care of by the destructor of instructionLocationEmitter
+			}
+			immutableReferencesBySub.erase(item.data());
 			break;
+		}
 		case PushDeployTimeAddress:
-			ret.bytecode.push_back(static_cast<uint8_t>(Instruction::PUSH20));
-			ret.bytecode.resize(ret.bytecode.size() + 20);
+			ret.bytecode += assemblePushDeployTimeAddress();
 			break;
 		case Tag:
-			assertThrow(i.data() != 0, AssemblyException, "Invalid tag position.");
-			assertThrow(i.splitForeignPushTag().first == numeric_limits<size_t>::max(), AssemblyException, "Foreign tag.");
-			assertThrow(ret.bytecode.size() < 0xffffffffL, AssemblyException, "Tag too large.");
-			assertThrow(m_tagPositionsInBytecode[static_cast<size_t>(i.data())] == numeric_limits<size_t>::max(), AssemblyException, "Duplicate tag position.");
-			m_tagPositionsInBytecode[static_cast<size_t>(i.data())] = ret.bytecode.size();
-			ret.bytecode.push_back(static_cast<uint8_t>(Instruction::JUMPDEST));
+			ret.bytecode += assembleTag(item, ret.bytecode.size(), true);
 			break;
 		default:
-			assertThrow(false, InvalidOpcode, "Unexpected opcode while assembling.");
+			solAssert(false, "Unexpected opcode while assembling.");
 		}
 	}
 
+	codeSectionLocation.end = ret.bytecode.size();
+
+	ret.codeSectionLocation = std::move(codeSectionLocation);
+
 	if (!immutableReferencesBySub.empty())
 		throw
-			langutil::Error(1284_error, langutil::Error::Type::CodeGenerationError) <<
-			util::errinfo_comment("Some immutables were read from but never assigned, possibly because of optimization.");
+			langutil::Error(
+				1284_error,
+				langutil::Error::Type::CodeGenerationError,
+				"Some immutables were read from but never assigned, possibly because of optimization."
+			);
 
 	if (!m_subs.empty() || !m_data.empty() || !m_auxiliaryData.empty())
 		// Append an INVALID here to help tests find miscompilation.
 		ret.bytecode.push_back(static_cast<uint8_t>(Instruction::INVALID));
 
-	for (auto const& [subIdPath, bytecodeOffset]: subRef)
+	std::map<LinkerObject, size_t> subAssemblyOffsets;
+	for (auto const& [subIdPath, bytecodeOffset]: subRefs)
 	{
+		LinkerObject subObject = subAssemblyById(subIdPath)->assemble();
 		bytesRef r(ret.bytecode.data() + bytecodeOffset, bytesPerDataRef);
-		toBigEndian(ret.bytecode.size(), r);
-		ret.append(subAssemblyById(subIdPath)->assemble());
-	}
 
-	for (auto const& i: tagRef)
+		// In order for de-duplication to kick in, not only must the bytecode be identical, but
+		// link and immutables references as well.
+		if (size_t* subAssemblyOffset = util::valueOrNullptr(subAssemblyOffsets, subObject))
+			toBigEndian(*subAssemblyOffset, r);
+		else
+		{
+			toBigEndian(ret.bytecode.size(), r);
+			subAssemblyOffsets[subObject] = ret.bytecode.size();
+			ret.bytecode += subObject.bytecode;
+		}
+		for (auto const& ref: subObject.linkReferences)
+			ret.linkReferences[ref.first + subAssemblyOffsets[subObject]] = ref.second;
+	}
+	for (auto const& i: tagRefs)
 	{
-		size_t subId;
-		size_t tagId;
-		tie(subId, tagId) = i.second;
-		assertThrow(subId == numeric_limits<size_t>::max() || subId < m_subs.size(), AssemblyException, "Invalid sub id");
-		vector<size_t> const& tagPositions =
-			subId == numeric_limits<size_t>::max() ?
+		auto [subId, tagId] = i.second;
+		solAssert(subId.empty() || subId.value < m_subs.size(), "Invalid sub id");
+		std::vector<size_t> const& tagPositions =
+			subId.empty() ?
 			m_tagPositionsInBytecode :
-			m_subs[subId]->m_tagPositionsInBytecode;
+			m_subs[subId.asIndex()]->m_tagPositionsInBytecode;
 		assertThrow(tagId < tagPositions.size(), AssemblyException, "Reference to non-existing tag.");
 		size_t pos = tagPositions[tagId];
-		assertThrow(pos != numeric_limits<size_t>::max(), AssemblyException, "Reference to tag without position.");
-		assertThrow(util::bytesRequired(pos) <= bytesPerTag, AssemblyException, "Tag too large for reserved space.");
+		assertThrow(pos != std::numeric_limits<size_t>::max(), AssemblyException, "Reference to tag without position.");
+		assertThrow(numberEncodingSize(pos) <= bytesPerTag, AssemblyException, "Tag too large for reserved space.");
 		bytesRef r(ret.bytecode.data() + i.first, bytesPerTag);
 		toBigEndian(pos, r);
 	}
+	for (auto const& [name, tagInfo]: m_namedTags)
+	{
+		size_t position = m_tagPositionsInBytecode.at(tagInfo.id);
+		std::optional<size_t> tagIndex;
+		for (auto&& [index, item]: m_items | ranges::views::enumerate)
+			if (item.type() == Tag && static_cast<size_t>(item.data()) == tagInfo.id)
+			{
+				tagIndex = index;
+				break;
+			}
+		ret.functionDebugData[name] = {
+			position == std::numeric_limits<size_t>::max() ? std::nullopt : std::optional<size_t>{position},
+			tagIndex,
+			tagInfo.sourceID,
+			tagInfo.params,
+			tagInfo.returns
+		};
+	}
+
 	for (auto const& dataItem: m_data)
 	{
-		auto references = dataRef.equal_range(dataItem.first);
+		auto references = dataRefs.equal_range(dataItem.first);
 		if (references.first == references.second)
 			continue;
 		for (auto ref = references.first; ref != references.second; ++ref)
@@ -749,7 +1284,7 @@ LinkerObject const& Assembly::assemble() const
 
 	ret.bytecode += m_auxiliaryData;
 
-	for (unsigned pos: sizeRef)
+	for (unsigned pos: sizeRefs)
 	{
 		bytesRef r(ret.bytecode.data() + pos, bytesPerDataRef);
 		toBigEndian(ret.bytecode.size(), r);
@@ -757,14 +1292,13 @@ LinkerObject const& Assembly::assemble() const
 	return ret;
 }
 
-vector<size_t> Assembly::decodeSubPath(size_t _subObjectId) const
+std::vector<SubAssemblyID> Assembly::decodeSubPath(SubAssemblyID _subObjectId) const
 {
-	if (_subObjectId < m_subs.size())
+	if (_subObjectId.value < m_subs.size())
 		return {_subObjectId};
 
-	auto subIdPathIt = find_if(
-		m_subPaths.begin(),
-		m_subPaths.end(),
+	auto subIdPathIt = ranges::find_if(
+		m_subPaths,
 		[_subObjectId](auto const& subId) { return subId.second == _subObjectId; }
 	);
 
@@ -772,35 +1306,49 @@ vector<size_t> Assembly::decodeSubPath(size_t _subObjectId) const
 	return subIdPathIt->first;
 }
 
-size_t Assembly::encodeSubPath(vector<size_t> const& _subPath)
+SubAssemblyID Assembly::encodeSubPath(std::vector<SubAssemblyID> const& _subPath)
 {
 	assertThrow(!_subPath.empty(), AssemblyException, "");
 	if (_subPath.size() == 1)
 	{
-		assertThrow(_subPath[0] < m_subs.size(), AssemblyException, "");
+		solAssert(_subPath[0].value < m_subs.size());
 		return _subPath[0];
 	}
 
-	if (m_subPaths.find(_subPath) == m_subPaths.end())
+	if (!m_subPaths.contains(_subPath))
 	{
-		size_t objectId = numeric_limits<size_t>::max() - m_subPaths.size();
-		assertThrow(objectId >= m_subs.size(), AssemblyException, "");
+		SubAssemblyID const objectId{std::numeric_limits<SubAssemblyID::ValueType>::max() - m_subPaths.size()};
+		solAssert(objectId.value >= m_subs.size());
 		m_subPaths[_subPath] = objectId;
 	}
 
 	return m_subPaths[_subPath];
 }
 
-Assembly const* Assembly::subAssemblyById(size_t _subId) const
+Assembly const* Assembly::subAssemblyById(SubAssemblyID const _subId) const
 {
-	vector<size_t> subIds = decodeSubPath(_subId);
+	std::vector<SubAssemblyID> subIDs = decodeSubPath(_subId);
 	Assembly const* currentAssembly = this;
-	for (size_t currentSubId: subIds)
+	for (auto const& subID: subIDs)
 	{
-		currentAssembly = currentAssembly->m_subs.at(currentSubId).get();
+		currentAssembly = currentAssembly->m_subs.at(subID.asIndex()).get();
 		assertThrow(currentAssembly, AssemblyException, "");
 	}
 
 	assertThrow(currentAssembly != this, AssemblyException, "");
 	return currentAssembly;
+}
+
+Assembly::OptimiserSettings Assembly::OptimiserSettings::translateSettings(frontend::OptimiserSettings const& _settings)
+{
+	// Constructing it this way so that we notice changes in the fields.
+	OptimiserSettings asmSettings{false,  false, false, false, false, false, 0};
+	asmSettings.runInliner = _settings.runInliner;
+	asmSettings.runJumpdestRemover = _settings.runJumpdestRemover;
+	asmSettings.runPeephole = _settings.runPeephole;
+	asmSettings.runDeduplicate = _settings.runDeduplicate;
+	asmSettings.runCSE = _settings.runCSE;
+	asmSettings.runConstantOptimiser = _settings.runConstantOptimiser;
+	asmSettings.expectedExecutionsPerDeployment = _settings.expectedExecutionsPerDeployment;
+	return asmSettings;
 }

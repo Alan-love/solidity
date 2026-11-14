@@ -11,9 +11,5 @@ contract C {
         return S({x: true, a: 8});
     }
 }
-
-// ====
-// compileViaYul: also
-// compileToEwasm: also
 // ----
 // s() -> 8, true
